@@ -1,0 +1,1126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GenMind Customer Simulator</title>
+  <style>
+    :root {
+      --bg: #f5f5ef;
+      --panel: rgba(255, 253, 247, 0.94);
+      --ink: #14211c;
+      --muted: #607169;
+      --line: #d6ddd8;
+      --brand: #175c47;
+      --brand-2: #0f766e;
+      --customer: #e5f0ff;
+      --service: #e7f8ee;
+      --web: #fff2da;
+      --llm: #efe5ff;
+      --simulator: #e5f0ff;
+      --genmind: #e7f8ee;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, #fffef9, transparent 40%),
+        linear-gradient(160deg, #eef4ef, #f7f4ee 55%, #e8efeb);
+    }
+
+    .shell {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .hero,
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      box-shadow: 0 18px 44px rgba(24, 31, 28, 0.08);
+    }
+
+    .hero {
+      padding: 24px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .eyebrow {
+      margin: 0;
+      letter-spacing: 0.12em;
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--brand);
+      font-weight: 700;
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+    }
+
+    .hero p,
+    .muted {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .meta-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      padding: 12px;
+    }
+
+    .meta-card span {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .meta-card strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 18px;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 400px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .chat-log {
+      max-height: 520px;
+      overflow: auto;
+      display: grid;
+      gap: 10px;
+      padding-right: 4px;
+    }
+
+    .bubble {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 12px 14px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    .bubble.user { background: var(--customer); }
+    .bubble.agent { background: var(--service); }
+
+    .bubble small {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 110px;
+      resize: vertical;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 14px;
+      font: inherit;
+    }
+
+    button {
+      width: 100%;
+      border: none;
+      border-radius: 16px;
+      padding: 12px 14px;
+      font: inherit;
+      font-weight: 700;
+      color: #f2fffb;
+      background: linear-gradient(120deg, var(--brand), var(--brand-2));
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: 0.65;
+      cursor: progress;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+    }
+
+    .button-secondary {
+      background: #ffffff;
+      color: var(--brand);
+      border: 1px solid var(--brand);
+    }
+
+    .status {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .trace-stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .prompt-panel {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #f9f5ff;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .prompt-panel .exchange-label {
+      color: #5a3d8a;
+    }
+
+    .trace-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      background: #fff;
+      display: grid;
+      gap: 10px;
+    }
+
+    .exchange-history {
+      display: grid;
+      gap: 12px;
+    }
+
+    .exchange-entry {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fafaf7;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .flow-guide {
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+      background: #fbfcff;
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .flow-guide-title {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+
+    .flow-guide-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .flow-guide-item {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 8px;
+      display: grid;
+      gap: 4px;
+      font-size: 12px;
+    }
+
+    .flow-guide-item strong {
+      font-size: 11px;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--brand);
+    }
+
+    .exchange-entry-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 8px;
+    }
+
+    .flow-phase {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+      margin: 8px 0;
+      position: relative;
+    }
+
+    .flow-phase + .flow-phase::before {
+      content: '↓';
+      position: absolute;
+      top: -18px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .flow-phase-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--brand);
+    }
+
+    .flow-phase-header .phase-number {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      background: var(--brand);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .message-direction {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      margin: 6px 0;
+    }
+
+    .message-direction.outbound { color: #5a7ba3; }
+    .message-direction.inbound { color: #2d6a4f; }
+    .message-direction.action { color: #8b5a04; }
+
+    .phase-summary {
+      display: grid;
+      gap: 6px;
+      background: #f8fafb;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 12px;
+    }
+
+    .phase-summary-item {
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+
+    .phase-summary-item strong {
+      min-width: 58px;
+      color: #415a77;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      font-size: 11px;
+    }
+
+    .actor-pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      border: 1px solid;
+      padding: 1px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .actor-pill.simulator {
+      color: #1f4e79;
+      border-color: #9fb8cf;
+      background: #eef5fb;
+    }
+
+    .actor-pill.genmind {
+      color: #1f5f43;
+      border-color: #9ecab5;
+      background: #edf8f2;
+    }
+
+    .actor-pill.memory {
+      color: #7b4f00;
+      border-color: #dfc08f;
+      background: #fff7ea;
+    }
+
+    .actor-pill.llm {
+      color: #5a3d8a;
+      border-color: #c6b5e9;
+      background: #f5f0ff;
+    }
+
+    .message-content {
+      background: #f9f9f6;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 13px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+
+    .db-action-summary {
+      border: 1px solid #d4a574;
+      border-radius: 8px;
+      background: rgba(212, 165, 116, 0.08);
+      padding: 8px;
+      display: grid;
+      gap: 4px;
+      font-size: 12px;
+    }
+
+    .db-action-item {
+      display: flex;
+      gap: 6px;
+      align-items: baseline;
+    }
+
+    .db-action-item strong {
+      min-width: 80px;
+      color: #8b5a04;
+    }
+
+    .uome-payload {
+      font-family: monospace;
+      font-size: 11px;
+      background: #f5f3f0;
+      border: 1px solid #e8e4e0;
+      border-radius: 6px;
+      padding: 8px;
+      display: grid;
+      gap: 4px;
+      max-height: 120px;
+      overflow-y: auto;
+    }
+
+    .uome-line {
+      display: grid;
+      gap: 2px;
+    }
+
+    .uome-item {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      font-size: 11px;
+    }
+
+    .uome-key {
+      min-width: 60px;
+      color: #5a3d8a;
+      font-weight: 600;
+    }
+
+    .uome-value {
+      color: #2d3436;
+      word-break: break-all;
+    }
+
+    .toggle-details {
+      background: none;
+      border: none;
+      padding: 4px 8px;
+      font-size: 12px;
+      color: var(--brand);
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+    .toggle-details:hover {
+      opacity: 0.7;
+    }
+
+    .details-hidden { display: none; }
+
+    .exchange-label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 700;
+    }
+
+    .exchange-text {
+      margin: 0;
+      white-space: pre-wrap;
+      line-height: 1.4;
+    }
+
+    .trace-card header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .badge.customer { background: var(--customer); }
+    .badge.service { background: var(--service); }
+    .badge.web { background: var(--web); }
+    .badge.llm { background: var(--llm); }
+
+    .sequence {
+      display: grid;
+      gap: 10px;
+    }
+
+    .step {
+      border-left: 3px solid var(--line);
+      padding-left: 12px;
+      display: grid;
+      gap: 5px;
+    }
+
+    .step.simulator {
+      border-left-color: #7aa7d8;
+      background: linear-gradient(90deg, rgba(229, 240, 255, 0.45), transparent);
+      border-radius: 10px;
+      padding: 10px 0 10px 12px;
+    }
+
+    .step.genmind {
+      border-left-color: #58a17a;
+      background: linear-gradient(90deg, rgba(231, 248, 238, 0.65), transparent);
+      border-radius: 10px;
+      padding: 10px 0 10px 12px;
+    }
+
+    .step-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .step small {
+      color: var(--muted);
+    }
+
+    .meta-tags {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .meta-tags span {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 12px;
+      color: var(--muted);
+      background: #f7faf8;
+    }
+
+    .knowledge-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .knowledge-item {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px;
+      background: #fffef7;
+    }
+
+    .knowledge-item a {
+      color: var(--brand);
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    .knowledge-item p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.4;
+    }
+
+    .empty {
+      border: 1px dashed var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      color: var(--muted);
+      background: #fbfcfa;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-family: "Iowan Old Style", Georgia, serif;
+      line-height: 1.45;
+    }
+
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 1fr; }
+      .meta-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 640px) {
+      .shell { padding: 16px; }
+      .meta-grid { grid-template-columns: 1fr; }
+      .actions { grid-template-columns: 1fr; }
+      .flow-guide-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <p class="eyebrow">Customer Simulator</p>
+      <h1>Customer Chat Simulator</h1>
+      <p>The user only asks a question here. Once submitted, the simulator talks to GenMind in the background and the diagram shows the exact messages exchanged between the two sides.</p>
+      <div id="meta-grid" class="meta-grid"></div>
+    </section>
+
+    <section class="layout">
+      <article class="panel">
+        <h2>Chat</h2>
+        <div id="chat-log" class="chat-log"></div>
+        <label for="question">Customer question</label>
+        <textarea id="question" placeholder="Example: Explain retrieval augmented generation simply and use any memory you have about my preference for concise answers."></textarea>
+        <div class="actions">
+          <button id="ask-button">Ask</button>
+          <button id="copy-session-button" class="button-secondary" type="button">Copy Session Exchange</button>
+          <button id="new-session-button" class="button-secondary" type="button">New Session</button>
+        </div>
+        <div id="status" class="status">Ready. Submit a question and the full background flow will start automatically.</div>
+      </article>
+
+      <article class="panel">
+        <h2>Message Exchange</h2>
+        <section class="flow-guide">
+          <div class="flow-guide-title">How To Read Each Turn</div>
+          <div class="flow-guide-grid">
+            <div class="flow-guide-item">
+              <strong>1. Ingestion</strong>
+              <span>Simulator sends the customer question to GenMind.</span>
+            </div>
+            <div class="flow-guide-item">
+              <strong>2. Processing</strong>
+              <span>GenMind decides what to write/update/delete in memory.</span>
+            </div>
+            <div class="flow-guide-item">
+              <strong>3. Retrieval</strong>
+              <span>GenMind returns relevant context items to the Simulator.</span>
+            </div>
+            <div class="flow-guide-item">
+              <strong>4. Prompt Build</strong>
+              <span>Simulator builds the final prompt and sends it to the Customer LLM.</span>
+            </div>
+          </div>
+        </section>
+        <div id="trace-root" class="trace-stack">
+          <section id="latest-llm-prompt" class="prompt-panel">
+            <div class="exchange-label">Latest Simulator -> Customer LLM (Final Prompt)</div>
+            <p class="exchange-text">No prompt sent yet.</p>
+          </section>
+          <div class="empty">Ask a question to see new message exchanges at the top and older ones at the bottom.</div>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <script>
+    const metaGrid = document.getElementById('meta-grid')
+    const chatLog = document.getElementById('chat-log')
+    const traceRoot = document.getElementById('trace-root')
+    const questionInput = document.getElementById('question')
+    const askButton = document.getElementById('ask-button')
+    const copySessionButton = document.getElementById('copy-session-button')
+    const newSessionButton = document.getElementById('new-session-button')
+    const statusEl = document.getElementById('status')
+    const defaultTraceHtml = '<div class="empty">Ask a question to see new message exchanges at the top and older ones at the bottom.</div>'
+
+    const createRuntimeSession = () => {
+      const suffix = (typeof crypto !== 'undefined' && crypto.randomUUID)
+        ? crypto.randomUUID().slice(0, 8)
+        : Math.random().toString(36).slice(2, 10)
+      return {
+        sessionId: `sess_ui_${suffix}`,
+        endUserId: `Demo_User_${suffix}`,
+      }
+    }
+
+    let runtimeSession = createRuntimeSession()
+    let latestPromptForExport = 'No prompt sent yet.'
+    let exchangeHistoryForExport = []
+
+    const badgeClass = (actor) => {
+      if (actor === 'genmind') return 'service'
+      if (actor === 'simulator') return 'customer'
+      if (actor === 'customer-service') return 'customer'
+      if (actor === 'customer-llm') return 'llm'
+      if (actor === 'web-knowledge') return 'web'
+      return 'service'
+    }
+
+    const actorLabel = (actor) => {
+      if (actor === 'genmind') return 'GenMind Service'
+      if (actor === 'simulator') return 'Simulator'
+      if (actor === 'customer-service') return 'Customer Service'
+      if (actor === 'customer-llm') return 'Customer LLM'
+      if (actor === 'web-knowledge') return 'Web Knowledge'
+      return actor
+    }
+
+    const escapeHtml = (value) => String(value)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;')
+
+    const appendBubble = (role, title, text) => {
+      const bubble = document.createElement('div')
+      bubble.className = `bubble ${role}`
+      bubble.innerHTML = `<small>${title}</small>${text}`
+      chatLog.prepend(bubble)
+    }
+
+    const readText = (node) => (node ? node.textContent.trim() : '')
+
+    const buildSessionExchangeExport = () => {
+      const lines = []
+      lines.push('GenMind Simulator Session Exchange Export')
+      lines.push(`Generated At: ${new Date().toISOString()}`)
+      lines.push(`Session ID: ${runtimeSession.sessionId}`)
+      lines.push(`End User ID: ${runtimeSession.endUserId}`)
+      lines.push('')
+
+      lines.push('== Chat Log ==')
+      const bubbles = Array.from(chatLog.querySelectorAll('.bubble')).reverse()
+      if (!bubbles.length) {
+        lines.push('(empty)')
+      } else {
+        bubbles.forEach((bubble, index) => {
+          const role = bubble.classList.contains('user') ? 'Customer asks' : 'Customer agent answers'
+          const title = readText(bubble.querySelector('small')) || role
+          const full = readText(bubble)
+          const body = full.startsWith(title) ? full.slice(title.length).trim() : full
+          lines.push(`${index + 1}. ${title}`)
+          lines.push(body || '(empty)')
+          lines.push('')
+        })
+      }
+
+      lines.push('== Message Exchange ==')
+      if (!exchangeHistoryForExport.length) {
+        lines.push('(empty)')
+      } else {
+        const formatList = (items) => {
+          if (!Array.isArray(items) || !items.length) return '(none)'
+          return items.map((item, idx) => `${idx + 1}) ${item}`).join('; ')
+        }
+        exchangeHistoryForExport.forEach((turn, index) => {
+          lines.push(`${index + 1}. Turn @ ${turn.timestamp}`)
+          lines.push('- Ingestion: User Question -> GenMind')
+          lines.push(`  ${turn.userInput || '(empty)'}`)
+          lines.push('- Processing: AUDN Decisions & Memory Writes')
+          lines.push(`  decisions=${turn.decisionCount}, memory_writes=${turn.memoryWrites}, selected_items=${turn.selectedItems}`)
+          lines.push(`  actions=add:${turn.actionBreakdown.add}, update:${turn.actionBreakdown.update}, delete:${turn.actionBreakdown.delete}, none:${turn.actionBreakdown.none}`)
+          lines.push(`  extracted_candidates=${formatList(turn.extractedCandidates)}`)
+          lines.push(`  persisted_facts=${formatList(turn.persistedFacts)}`)
+          lines.push(`  reason=${turn.memoryWriteReason || 'n/a'}`)
+          lines.push('- Retrieval: Memory Context -> Simulator')
+          lines.push(`  ${turn.contextText || '(empty)'}`)
+          lines.push('- DB Session Snapshot')
+          lines.push(`  ${turn.dbSnapshotText || '(empty)'}`)
+          lines.push('- LLM Final Prompt')
+          lines.push(`  ${turn.finalPromptText || '(empty)'}`)
+          lines.push('')
+        })
+      }
+
+      lines.push('== Latest Simulator -> Customer LLM (Final Prompt) ==')
+      lines.push((latestPromptForExport || '').trim() || '(empty)')
+      lines.push('')
+
+      return lines.join('\n').trim() + '\n'
+    }
+
+    const copyTextToClipboard = async (text) => {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text)
+        return
+      }
+
+      const temp = document.createElement('textarea')
+      temp.value = text
+      temp.setAttribute('readonly', '')
+      temp.style.position = 'fixed'
+      temp.style.top = '-1000px'
+      temp.style.left = '-1000px'
+      document.body.appendChild(temp)
+      temp.focus()
+      temp.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(temp)
+      if (!ok) {
+        throw new Error('Clipboard copy is not permitted in this browser context.')
+      }
+    }
+
+    const renderMeta = async () => {
+      const response = await fetch('/simulator/config')
+      const data = await response.json()
+      const pairs = [
+        ['Customer', data.customer_name],
+        ['Customer ID', data.resolved_customer_id || 'Pending'],
+        ['Workspace ID', data.resolved_workspace_id || 'Pending'],
+        ['Agent', data.agent_id],
+        ['Tester Session ID', runtimeSession.sessionId],
+        ['Tester End User', runtimeSession.endUserId],
+      ]
+      metaGrid.innerHTML = pairs.map(([label, value]) => `
+        <div class="meta-card">
+          <span>${label}</span>
+          <strong>${value}</strong>
+        </div>
+      `).join('')
+    }
+
+    const decodeUomePayload = (compactStr) => {
+      const lines = []
+      const fields = compactStr.split('|').filter(Boolean)
+      const keyMap = {
+        'i': 'index',
+        's': 'score',
+        'u': 'updated_at',
+        'm': 'memory_id',
+        'c': 'content_hint',
+        'mt': 'mutation_type',
+        'src': 'source_entity',
+        'tgt': 'target',
+        'val': 'value',
+        'tt': 'temporal_type',
+        'vf': 'valid_from',
+        'vu': 'valid_until',
+        'v': 'version',
+      }
+      fields.forEach(field => {
+        const [k, v] = field.split('=', 2)
+        const label = keyMap[k] || k
+        const displayVal = v === undefined ? k : v
+        lines.push(`<div class="uome-item"><span class="uome-key">${escapeHtml(label)}:</span><span class="uome-value">${escapeHtml(displayVal)}</span></div>`)
+      })
+      return lines.join('')
+    }
+
+    const renderTrace = (data) => {
+      const finalPromptText = (data.customer_prompt || '').trim() || 'No final LLM prompt returned.'
+      latestPromptForExport = finalPromptText
+      const latestPromptPanel = document.getElementById('latest-llm-prompt')
+      if (latestPromptPanel) {
+        latestPromptPanel.innerHTML = `
+          <div class="exchange-label">Latest Simulator -> Customer LLM (Final Prompt)</div>
+          <p class="exchange-text">${escapeHtml(finalPromptText)}</p>
+        `
+      }
+
+      if (traceRoot.querySelector('.empty')) {
+        traceRoot.innerHTML = '<div class="exchange-history" id="exchange-history"></div>'
+      }
+
+      const historyRoot = document.getElementById('exchange-history')
+      if (!historyRoot) return
+
+      const contextText = (data.context_excerpt || '').trim() || 'No context text returned.'
+      const dbSnapshotText = (data.db_session_snapshot || '').trim() || 'No session snapshot returned.'
+      const timestamp = new Date().toLocaleTimeString()
+      const decisionCount = data.decision_count || 0
+      const memoryWrites = Number.isFinite(data.memory_writes)
+        ? data.memory_writes
+        : (decisionCount > 0 ? decisionCount : 0)
+      const memoryWriteReason = (data.memory_write_reason || '').trim()
+        || (decisionCount === 0
+          ? 'No extractable fact matched AUDN rules for this turn.'
+          : (memoryWrites === 0 ? 'All AUDN decisions resolved to no-op actions.' : 'AUDN produced persisted memory mutations.'))
+      const selectedItems = Number.isFinite(data.selected_items) ? data.selected_items : 0
+      const actionBreakdownRaw = data.action_breakdown || {}
+      const actionBreakdown = {
+        add: Number.isFinite(actionBreakdownRaw.add) ? actionBreakdownRaw.add : 0,
+        update: Number.isFinite(actionBreakdownRaw.update) ? actionBreakdownRaw.update : 0,
+        delete: Number.isFinite(actionBreakdownRaw.delete) ? actionBreakdownRaw.delete : 0,
+        none: Number.isFinite(actionBreakdownRaw.none) ? actionBreakdownRaw.none : Math.max(0, decisionCount - memoryWrites),
+      }
+      const extractedCandidates = Array.isArray(data.extracted_candidates)
+        ? data.extracted_candidates.filter(item => typeof item === 'string' && item.trim())
+        : []
+      const persistedFacts = Array.isArray(data.persisted_facts)
+        ? data.persisted_facts.filter(item => typeof item === 'string' && item.trim())
+        : []
+      const formatInlineList = (items) => items.length ? items.map((item, idx) => `${idx + 1}) ${escapeHtml(item)}`).join('<br>') : 'None'
+
+      const entry = document.createElement('section')
+      entry.className = 'exchange-entry'
+
+      let phasesHtml = ''
+
+      phasesHtml += `
+        <div class="flow-phase">
+          <div class="flow-phase-header">
+            <span class="phase-number">1</span>
+            <span>Ingestion: User Question → GenMind</span>
+          </div>
+          <div class="phase-summary">
+            <div class="phase-summary-item"><strong>Who</strong><span class="actor-pill simulator">Simulator</span> → <span class="actor-pill genmind">GenMind</span></div>
+            <div class="phase-summary-item"><strong>Action</strong>Send customer question as MCP input</div>
+            <div class="phase-summary-item"><strong>Output</strong>Question payload received by GenMind pipeline</div>
+          </div>
+          <div class="message-direction outbound">📤 Message Payload</div>
+          <div class="message-content">${escapeHtml(data.user_input)}</div>
+        </div>
+      `
+
+      phasesHtml += `
+        <div class="flow-phase">
+          <div class="flow-phase-header">
+            <span class="phase-number">2</span>
+            <span>Processing: AUDN Decisions & Memory Writes</span>
+          </div>
+          <div class="phase-summary">
+            <div class="phase-summary-item"><strong>Who</strong><span class="actor-pill genmind">GenMind</span> + <span class="actor-pill memory">Memory DB</span></div>
+            <div class="phase-summary-item"><strong>Action</strong>Classify facts and apply add/update/delete/none actions</div>
+            <div class="phase-summary-item"><strong>Output</strong>Decision counts, persisted facts, and write reason</div>
+          </div>
+          <div class="db-action-summary">
+            <div class="db-action-item"><strong>Decisions:</strong>${decisionCount}</div>
+            <div class="db-action-item"><strong>Memory Writes:</strong>${memoryWrites}</div>
+            <div class="db-action-item"><strong>Action Breakdown:</strong>add=${actionBreakdown.add}, update=${actionBreakdown.update}, delete=${actionBreakdown.delete}, none=${actionBreakdown.none}</div>
+            <div class="db-action-item"><strong>Extracted Candidates:</strong><br>${formatInlineList(extractedCandidates)}</div>
+            <div class="db-action-item"><strong>Persisted Facts:</strong><br>${formatInlineList(persistedFacts)}</div>
+            <div class="db-action-item"><strong>Reason:</strong>${escapeHtml(memoryWriteReason)}</div>
+          </div>
+        </div>
+      `
+
+      phasesHtml += `
+        <div class="flow-phase">
+          <div class="flow-phase-header">
+            <span class="phase-number">3</span>
+            <span>Retrieval: Memory Context → Simulator</span>
+          </div>
+          <div class="phase-summary">
+            <div class="phase-summary-item"><strong>Who</strong><span class="actor-pill genmind">GenMind</span> → <span class="actor-pill simulator">Simulator</span></div>
+            <div class="phase-summary-item"><strong>Action</strong>Return compact context built from selected memory items</div>
+            <div class="phase-summary-item"><strong>Output</strong>${selectedItems} retrieved item(s) included in context payload</div>
+          </div>
+          <div class="message-direction inbound">📥 Retrieved Context Payload</div>
+          <div style="font-size:12px;color:var(--muted);margin:4px 0;">Retrieved ${selectedItems} memory item(s) matching query</div>
+          <button class="toggle-details" onclick="this.parentElement.querySelector('.context-details').classList.toggle('details-hidden'); this.textContent = this.textContent === 'Show' ? 'Hide' : 'Show'">Show</button>
+          <div class="context-details details-hidden">
+            <div style="font-size:11px;color:var(--muted);margin:4px 0;font-weight:700;">UOME Payload (Compact Format):</div>
+            <div class="uome-payload">${decodeUomePayload(contextText)}</div>
+          </div>
+        </div>
+      `
+
+      phasesHtml += `
+        <div class="flow-phase">
+          <div class="flow-phase-header">
+            <span class="phase-number">4</span>
+            <span>LLM Prompt Generation</span>
+          </div>
+          <div class="phase-summary">
+            <div class="phase-summary-item"><strong>Who</strong><span class="actor-pill simulator">Simulator</span> → <span class="actor-pill llm">Customer LLM</span></div>
+            <div class="phase-summary-item"><strong>Action</strong>Build final prompt from question + retrieved context</div>
+            <div class="phase-summary-item"><strong>Output</strong>Prompt that drives the customer-facing final answer</div>
+          </div>
+          <div class="message-direction action">🤖 Final Prompt Payload</div>
+          <button class="toggle-details" onclick="this.parentElement.querySelector('.prompt-details').classList.toggle('details-hidden'); this.textContent = this.textContent === 'Show' ? 'Hide' : 'Show'">Show</button>
+          <div class="prompt-details details-hidden">
+            <div class="message-content">${escapeHtml(finalPromptText)}</div>
+          </div>
+        </div>
+      `
+
+      entry.innerHTML = `
+        <div class="exchange-entry-title">
+          <strong>🔄 Turn @ ${timestamp}</strong>
+          <span class="muted">Session: ${escapeHtml(data.session_id)}</span>
+        </div>
+        ${phasesHtml}
+      `
+
+      exchangeHistoryForExport.unshift({
+        timestamp,
+        userInput: (data.user_input || '').trim(),
+        decisionCount,
+        memoryWrites,
+        memoryWriteReason,
+        actionBreakdown,
+        extractedCandidates,
+        persistedFacts,
+        selectedItems,
+        contextText,
+        dbSnapshotText,
+        finalPromptText,
+      })
+
+      if (exchangeHistoryForExport.length > 20) {
+        exchangeHistoryForExport = exchangeHistoryForExport.slice(0, 20)
+      }
+
+      historyRoot.prepend(entry)
+
+      while (historyRoot.children.length > 20) {
+        historyRoot.removeChild(historyRoot.lastElementChild)
+      }
+    }
+
+    askButton.addEventListener('click', async () => {
+      const userInput = questionInput.value.trim()
+      if (!userInput) {
+        statusEl.textContent = 'Enter a question first.'
+        return
+      }
+
+      askButton.disabled = true
+      statusEl.textContent = 'Question received. Running background flow...'
+      appendBubble('user', 'Customer asks', userInput)
+
+      try {
+        const response = await fetch('/simulate/chat_flow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_input: userInput,
+            session_id: runtimeSession.sessionId,
+            end_user_id: runtimeSession.endUserId,
+            query: userInput,
+            metadata: { source: 'simulator-ui' },
+          }),
+        })
+
+        if (!response.ok) {
+          throw new Error(await response.text())
+        }
+
+        const data = await response.json()
+        appendBubble('agent', 'Customer agent answers', data.final_answer)
+        renderTrace(data)
+        questionInput.value = ''
+        statusEl.textContent = 'Answer ready. Background flow completed.'
+      } catch (error) {
+        statusEl.textContent = `Failed: ${error.message}`
+      } finally {
+        askButton.disabled = false
+      }
+    })
+
+    newSessionButton.addEventListener('click', async () => {
+      if (askButton.disabled) {
+        statusEl.textContent = 'Please wait for the current request to finish before starting a new session.'
+        return
+      }
+
+      runtimeSession = createRuntimeSession()
+      chatLog.innerHTML = ''
+      traceRoot.innerHTML = `
+        <section id="latest-llm-prompt" class="prompt-panel">
+          <div class="exchange-label">Latest Simulator -> Customer LLM (Final Prompt)</div>
+          <p class="exchange-text">No prompt sent yet.</p>
+        </section>
+        ${defaultTraceHtml}
+      `
+      questionInput.value = ''
+      latestPromptForExport = 'No prompt sent yet.'
+      exchangeHistoryForExport = []
+
+      try {
+        await renderMeta()
+      } catch (error) {
+        statusEl.textContent = `Session reset failed: ${error.message}`
+        return
+      }
+
+      statusEl.textContent = `Started fresh session ${runtimeSession.sessionId}. GenMind will receive this as a new session with a new end-user context.`
+    })
+
+    copySessionButton.addEventListener('click', async () => {
+      if (askButton.disabled) {
+        statusEl.textContent = 'Please wait for the current request to finish before copying the session exchange.'
+        return
+      }
+
+      try {
+        const exportText = buildSessionExchangeExport()
+        await copyTextToClipboard(exportText)
+        statusEl.textContent = `Copied current session exchange (${runtimeSession.sessionId}) to clipboard.`
+      } catch (error) {
+        statusEl.textContent = `Copy failed: ${error.message}`
+      }
+    })
+
+    questionInput.addEventListener('keydown', (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !askButton.disabled) {
+        askButton.click()
+      }
+    })
+
+    renderMeta().catch((error) => {
+      statusEl.textContent = `Config load failed: ${error.message}`
+    })
+  </script>
+</body>
+</html>

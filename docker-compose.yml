@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: genmind-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: genmind
+      POSTGRES_PASSWORD: genmind
+      POSTGRES_DB: genmind
+    ports:
+      - "5432:5432"
+    volumes:
+      - genmind_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U genmind -d genmind"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  genmind_pg_data:

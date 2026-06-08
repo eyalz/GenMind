@@ -1,0 +1,1 @@
+"""GenMind package root."""

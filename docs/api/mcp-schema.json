@@ -1,0 +1,853 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GenMind MCP Server API",
+    "version": "0.3.0",
+    "description": "Remote MCP server for multi-tenant memory retrieval, one-shot send-and-receive flows, and asynchronous AUDN ingestion. Includes customer management, authentication, usage tracking, and privacy-safe end-user memory isolation."
+  },
+  "servers": [
+    {
+      "url": "https://api.genmind.example",
+      "description": "Production"
+    },
+    {
+      "url": "http://localhost:8000",
+      "description": "Local development"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "paths": {
+    "/admin/customers": {
+      "post": {
+        "summary": "Create a new customer",
+        "operationId": "createCustomer",
+        "tags": ["admin"],
+        "security": [{"BearerAuth": ["admin:customers:write"]}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateCustomerRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Customer created",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Customer"}}}
+          }
+        }
+      },
+      "get": {
+        "summary": "List all customers",
+        "operationId": "listCustomers",
+        "tags": ["admin"],
+        "security": [{"BearerAuth": ["admin:customers:read"]}],
+        "responses": {
+          "200": {
+            "description": "List of customers",
+            "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Customer"}}}}
+          }
+        }
+      }
+    },
+    "/admin/customers/{customer_id}/workspaces": {
+      "post": {
+        "summary": "Create workspace under a customer",
+        "operationId": "createWorkspace",
+        "tags": ["admin"],
+        "security": [{"BearerAuth": ["admin:customers:write"]}],
+        "parameters": [
+          {"name": "customer_id", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/CreateWorkspaceRequest"}}
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Workspace created",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Workspace"}}}
+          }
+        }
+      }
+    },
+    "/admin/workspaces/{workspace_id}/credentials": {
+      "post": {
+        "summary": "Issue API credentials for a workspace",
+        "operationId": "issueCredential",
+        "tags": ["admin"],
+        "security": [{"BearerAuth": ["admin:credentials:write"]}],
+        "parameters": [
+          {"name": "workspace_id", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/IssueCredentialRequest"}}
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Credential issued. Raw key returned once only.",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CredentialIssuedResponse"}}}
+          }
+        }
+      }
+    },
+    "/admin/usage/{customer_id}": {
+      "get": {
+        "summary": "Get usage aggregates for a customer",
+        "operationId": "getCustomerUsage",
+        "tags": ["admin", "usage"],
+        "security": [{"BearerAuth": ["admin:usage:read"]}],
+        "parameters": [
+          {"name": "customer_id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "date_from", "in": "query", "schema": {"type": "string", "format": "date"}},
+          {"name": "date_to", "in": "query", "schema": {"type": "string", "format": "date"}},
+          {"name": "workspace_id", "in": "query", "schema": {"type": "string"}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Daily usage aggregates",
+            "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/UsageDailyAggregate"}}}}
+          }
+        }
+      }
+    },
+    "/admin/end-users/{end_user_id}/delete": {
+      "post": {
+        "summary": "Submit right-to-delete request for an end user",
+        "operationId": "deleteEndUserData",
+        "tags": ["admin", "privacy"],
+        "security": [{"BearerAuth": ["admin:privacy:write"]}],
+        "parameters": [
+          {"name": "end_user_id", "in": "path", "required": true, "schema": {"type": "string"}}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/EndUserDeleteRequest"}}
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Deletion request accepted for async processing"
+          }
+        }
+      }
+    },
+    "/mcp/initialization": {
+      "post": {
+        "summary": "MCP initialization handshake",
+        "operationId": "initializeMcp",
+        "tags": ["mcp"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MCPInitializationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "MCP server capabilities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPInitializationResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/resources": {
+      "get": {
+        "summary": "List MCP resources",
+        "operationId": "listMcpResources",
+        "responses": {
+          "200": {
+            "description": "Available resources"
+          }
+        }
+      },
+      "post": {
+        "summary": "Read resource payload",
+        "operationId": "readMcpResource",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MCPResourceReadRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Context payload for resource URI",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPResourceReadResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/tools": {
+      "get": {
+        "summary": "List MCP tools",
+        "operationId": "listMcpTools",
+        "responses": {
+          "200": {
+            "description": "Available tools"
+          }
+        }
+      }
+    },
+    "/mcp/tools/update_memory_state": {
+      "post": {
+        "summary": "Submit turn for AUDN processing",
+        "operationId": "updateMemoryState",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMemoryToolRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "AUDN request accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolAcceptedResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/tools/send_and_receive": {
+      "post": {
+        "summary": "Commit one turn and return refreshed context in one response",
+        "operationId": "sendAndReceive",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendAndReceiveToolRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "AUDN committed and updated context returned immediately",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendAndReceiveToolResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/stream": {
+      "post": {
+        "summary": "Unified streamable MCP endpoint (JSON-RPC)",
+        "operationId": "streamableMcp",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MCPStreamRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JSON-RPC MCP result or error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MCPStreamResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcp/events": {
+      "get": {
+        "summary": "Server-Sent Events stream",
+        "operationId": "streamMcpEvents",
+        "responses": {
+          "200": {
+            "description": "SSE stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "summary": "Liveness health check",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "Health status"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TenantContext": {
+        "type": "object",
+        "required": [
+          "customer_id",
+          "workspace_id",
+          "end_user_id",
+          "session_id"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 128
+          },
+          "workspace_id": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 128
+          },
+          "end_user_id": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 256
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 256
+          }
+        }
+      },
+      "MCPInitializationRequest": {
+        "type": "object",
+        "required": [
+          "protocol_version",
+          "client_name",
+          "client_version"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "protocol_version": {
+            "type": "string",
+            "default": "2026-01-01"
+          },
+          "client_name": {
+            "type": "string"
+          },
+          "client_version": {
+            "type": "string"
+          }
+        }
+      },
+      "MCPInitializationResponse": {
+        "type": "object",
+        "required": [
+          "protocol_version",
+          "server_name",
+          "server_version",
+          "transport",
+          "stream_endpoint",
+          "resources_endpoint",
+          "tools_endpoint"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "protocol_version": {
+            "type": "string"
+          },
+          "server_name": {
+            "type": "string"
+          },
+          "server_version": {
+            "type": "string"
+          },
+          "transport": {
+            "type": "string",
+            "enum": [
+              "streamable/http"
+            ]
+          },
+          "stream_endpoint": {
+            "type": "string"
+          },
+          "resources_endpoint": {
+            "type": "string"
+          },
+          "tools_endpoint": {
+            "type": "string"
+          }
+        }
+      },
+      "MCPStreamRequest": {
+        "type": "object",
+        "required": [
+          "jsonrpc",
+          "method",
+          "params"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "jsonrpc": {
+            "type": "string",
+            "default": "2.0"
+          },
+          "id": {
+            "oneOf": [
+              {"type": "string"},
+              {"type": "integer"},
+              {"type": "null"}
+            ]
+          },
+          "method": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "MCPStreamResponse": {
+        "type": "object",
+        "required": [
+          "jsonrpc"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "jsonrpc": {
+            "type": "string",
+            "default": "2.0"
+          },
+          "id": {
+            "oneOf": [
+              {"type": "string"},
+              {"type": "integer"},
+              {"type": "null"}
+            ]
+          },
+          "result": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "MCPResourceReadRequest": {
+        "type": "object",
+        "required": [
+          "uri",
+          "tenant",
+          "query",
+          "max_tokens"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "uri": {
+            "type": "string",
+            "example": "genmind://sessions/session-123/context"
+          },
+          "tenant": {
+            "$ref": "#/components/schemas/TenantContext"
+          },
+          "query": {
+            "type": "string"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 2000,
+            "default": 1000
+          }
+        }
+      },
+      "MCPResourceReadResponse": {
+        "type": "object",
+        "required": [
+          "uri",
+          "mime_type",
+          "contents",
+          "token_estimate",
+          "selected_items"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "uri": {
+            "type": "string"
+          },
+          "mime_type": {
+            "type": "string",
+            "enum": [
+              "text/markdown"
+            ]
+          },
+          "contents": {
+            "type": "string"
+          },
+          "token_estimate": {
+            "type": "integer"
+          },
+          "selected_items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "UpdateMemoryToolRequest": {
+        "type": "object",
+        "required": [
+          "customer_id",
+          "workspace_id",
+          "maker_id",
+          "agent_id",
+          "end_user_id",
+          "session_id",
+          "user_input",
+          "model_output"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string"
+          },
+          "maker_id": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "end_user_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "user_input": {
+            "type": "string"
+          },
+          "model_output": {
+            "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "SendAndReceiveToolRequest": {
+        "type": "object",
+        "required": [
+          "customer_id",
+          "workspace_id",
+          "maker_id",
+          "agent_id",
+          "end_user_id",
+          "session_id",
+          "user_input",
+          "model_output"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string"
+          },
+          "maker_id": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "end_user_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "user_input": {
+            "type": "string"
+          },
+          "model_output": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string",
+            "default": "latest context"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 2000,
+            "default": 1000
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ToolAcceptedResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "tool",
+          "tenant",
+          "message"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "accepted"
+            ]
+          },
+          "tool": {
+            "type": "string",
+            "enum": [
+              "update_memory_state"
+            ]
+          },
+          "tenant": {
+            "$ref": "#/components/schemas/TenantContext"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "SendAndReceiveToolResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "tool",
+          "tenant",
+          "maker_id",
+          "agent_id",
+          "uri",
+          "contents",
+          "token_estimate",
+          "selected_items",
+          "decision_count",
+          "decisions"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["completed"]
+          },
+          "tool": {
+            "type": "string",
+            "enum": ["send_and_receive"]
+          },
+          "tenant": {
+            "$ref": "#/components/schemas/TenantContext"
+          },
+          "maker_id": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "uri": {
+            "type": "string"
+          },
+          "contents": {
+            "type": "string"
+          },
+          "token_estimate": {
+            "type": "integer"
+          },
+          "selected_items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "decision_count": {
+            "type": "integer"
+          },
+          "decisions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "CreateCustomerRequest": {
+        "type": "object",
+        "required": ["display_name", "plan", "region"],
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {"type": "string", "minLength": 2, "maxLength": 256},
+          "plan": {"type": "string", "enum": ["starter", "growth", "enterprise"]},
+          "region": {"type": "string", "enum": ["us-east-1", "eu-west-1", "ap-southeast-1"]},
+          "retention_days": {"type": "integer", "minimum": 7, "maximum": 730, "default": 90}
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "required": ["customer_id", "display_name", "status", "plan", "region", "retention_days", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {"type": "string"},
+          "display_name": {"type": "string"},
+          "status": {"type": "string", "enum": ["active", "suspended", "offboarded"]},
+          "plan": {"type": "string", "enum": ["starter", "growth", "enterprise"]},
+          "region": {"type": "string"},
+          "retention_days": {"type": "integer"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "CreateWorkspaceRequest": {
+        "type": "object",
+        "required": ["display_name", "environment"],
+        "additionalProperties": false,
+        "properties": {
+          "display_name": {"type": "string", "minLength": 2, "maxLength": 256},
+          "environment": {"type": "string", "enum": ["dev", "staging", "prod"]},
+          "monthly_request_quota": {"type": "integer", "minimum": 1}
+        }
+      },
+      "Workspace": {
+        "type": "object",
+        "required": ["workspace_id", "customer_id", "display_name", "environment", "status", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "workspace_id": {"type": "string"},
+          "customer_id": {"type": "string"},
+          "display_name": {"type": "string"},
+          "environment": {"type": "string", "enum": ["dev", "staging", "prod"]},
+          "status": {"type": "string", "enum": ["active", "suspended"]},
+          "monthly_request_quota": {"type": "integer", "nullable": true},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "IssueCredentialRequest": {
+        "type": "object",
+        "required": ["scopes"],
+        "additionalProperties": false,
+        "properties": {
+          "scopes": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["memory:read", "memory:write", "memory:raw_read", "admin:*"]},
+            "minItems": 1
+          },
+          "expires_at": {"type": "string", "format": "date-time", "nullable": true}
+        }
+      },
+      "CredentialIssuedResponse": {
+        "type": "object",
+        "required": ["credential_id", "raw_key", "key_prefix", "scopes", "created_at"],
+        "additionalProperties": false,
+        "properties": {
+          "credential_id": {"type": "string"},
+          "raw_key": {"type": "string", "description": "Shown once only. Store securely."},
+          "key_prefix": {"type": "string"},
+          "scopes": {"type": "array", "items": {"type": "string"}},
+          "expires_at": {"type": "string", "format": "date-time", "nullable": true},
+          "created_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "UsageDailyAggregate": {
+        "type": "object",
+        "required": ["customer_id", "workspace_id", "date", "total_requests", "total_tokens_in", "total_tokens_out", "total_context_tokens", "total_vector_reads", "total_memory_writes", "active_end_users", "avg_latency_ms"],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {"type": "string"},
+          "workspace_id": {"type": "string"},
+          "date": {"type": "string", "format": "date"},
+          "total_requests": {"type": "integer"},
+          "total_tokens_in": {"type": "integer"},
+          "total_tokens_out": {"type": "integer"},
+          "total_context_tokens": {"type": "integer"},
+          "total_vector_reads": {"type": "integer"},
+          "total_memory_writes": {"type": "integer"},
+          "active_end_users": {"type": "integer"},
+          "avg_latency_ms": {"type": "number"}
+        }
+      },
+      "EndUserDeleteRequest": {
+        "type": "object",
+        "required": ["customer_id", "workspace_id", "end_user_id", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {"type": "string"},
+          "workspace_id": {"type": "string"},
+          "end_user_id": {"type": "string"},
+          "reason": {"type": "string", "enum": ["gdpr_article_17", "user_request", "account_closure", "operator_initiated"]}
+        }
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Short-lived JWT signed with RS256. Claims must include customer_id, workspace_id, and scopes."
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+openai==1.58.1
+asyncpg==0.30.0
+PyJWT==2.10.1
+cryptography==44.0.0
+pgvector==0.3.6
+langchain==0.3.14
+llama-index-core==0.12.8
+python-dotenv==1.0.1
+sentence-transformers==3.2.1
