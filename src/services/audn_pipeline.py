@@ -60,6 +60,17 @@ class AUDNPipeline:
         "instead",
     ]
 
+    LOW_VALUE_REQUEST_PATTERNS = [
+        re.compile(r"^\s*(can|could|would|will)\s+you\b", re.IGNORECASE),
+        re.compile(r"^\s*(find|show|tell|give|list|recommend|search|fetch|check|run|build|deploy|debug)\b", re.IGNORECASE),
+        re.compile(r"^\s*(what|who|when|where|why|how)\b", re.IGNORECASE),
+    ]
+
+    STABLE_MEMORY_CUES = [
+        re.compile(r"\b(i am|i'm|im|i was|i work|i live|i have|my|i prefer|i like|remember that)\b", re.IGNORECASE),
+        re.compile(r"\b(always|usually|never|allergic|preference|profile|timezone|language|role|title)\b", re.IGNORECASE),
+    ]
+
     PROFILE_PREFIX = "profile."
 
     ABSOLUTE_OVERWRITE_KEYS = {
@@ -168,6 +179,7 @@ class AUDNPipeline:
 
             if decision.action == AUDNAction.DELETE and decision.target_memory_id:
                 await self.memory_engine.deactivate_memory_record(decision.target_memory_id)
+                await self.memory_engine.deactivate_claims_for_memory(decision.target_memory_id)
                 await self._persist_audit_row(decision)
                 continue
 
@@ -182,6 +194,10 @@ class AUDNPipeline:
                     confidence=decision.confidence,
                 )
                 await self.memory_engine.persist_memory_record(record)
+                await self.memory_engine.upsert_claim_from_decision(
+                    decision,
+                    memory_id=record.memory_id,
+                )
 
                 parsed_property = self._parse_profile_memory(record.content)
                 if parsed_property is not None:
@@ -238,6 +254,7 @@ class AUDNPipeline:
             if existing_key != property_key:
                 continue
             await self.memory_engine.deactivate_memory_record(row.memory_id)
+            await self.memory_engine.deactivate_claims_for_memory(row.memory_id)
 
     async def _persist_audit_row(self, decision: AUDNDecision) -> None:
         pool = get_pool()
@@ -370,6 +387,19 @@ class AUDNPipeline:
                     reason="Candidate is low-signal conversational filler.",
                     candidate_fact=candidate_fact,
                     confidence=0.97,
+                )
+            ]
+
+        if self._is_low_value_candidate(candidate_fact):
+            return [
+                self._make_decision(
+                    tenant=tenant,
+                    maker_id=maker_id,
+                    agent_id=agent_id,
+                    action=AUDNAction.NONE,
+                    reason="Low-signal transient query/task request skipped to protect long-term memory quality.",
+                    candidate_fact=candidate_fact,
+                    confidence=0.96,
                 )
             ]
 
@@ -835,6 +865,34 @@ class AUDNPipeline:
     def _is_noise(self, text: str) -> bool:
         lowered = text.lower().strip()
         return any(re.search(pattern, lowered) for pattern in self.NOISE_PATTERNS)
+
+    def _is_low_value_candidate(self, text: str) -> bool:
+        candidate = " ".join(text.split()).strip()
+        lowered = candidate.lower()
+
+        if not candidate:
+            return True
+        if candidate.startswith(self.PROFILE_PREFIX):
+            return False
+        if candidate.startswith("system.") or candidate.startswith("entity."):
+            return False
+        if self._parse_profile_memory(candidate) is not None:
+            return False
+        if self.RELATIONSHIP_PATTERN.search(candidate) or self.MY_RELATIONSHIP_PATTERN.search(candidate):
+            return False
+        if any(pattern.search(candidate) for pattern in self.STABLE_MEMORY_CUES):
+            return False
+
+        # Questions and imperative requests are usually transient context, not durable memory.
+        if candidate.endswith("?"):
+            return True
+        if any(pattern.search(candidate) for pattern in self.LOW_VALUE_REQUEST_PATTERNS):
+            return True
+
+        # Very short free text without stable-user cues tends to be noisy memory.
+        if len(lowered) < 18:
+            return True
+        return False
 
     def _extract_age(self, text: str) -> int | None:
         lowered = text.lower()

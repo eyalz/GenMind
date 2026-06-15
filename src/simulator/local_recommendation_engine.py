@@ -9,7 +9,7 @@ Replaces static keyword lists with dynamic dual-signal detection:
 import json
 import logging
 import re
-from typing import Any, Optional, Union
+from typing import Any, List, Optional
 
 # Configure logger for structured output
 _engine_logger = logging.getLogger("local_rec_engine")
@@ -97,6 +97,12 @@ class LocalRecommendationEngine:
         "vs_comparison": r"\b(vs|versus|vs\.|compared to|compared with)\b",
         "which_comparison": r"\b(which|what)\s+\w*\s+(is|are)\s+(better|best|worse)\b",
     }
+
+    PRONOUN_FOLLOWUP_PATTERN = re.compile(r"\b(ones?|them|there|those|it|that)\b", re.IGNORECASE)
+    SUBJECT_OVERRIDE_CUES = re.compile(
+        r"\b(actually|forget|instead|no longer|not anymore|switch to|replace)\b",
+        re.IGNORECASE,
+    )
     
     @staticmethod
     def _extract_locations(query: str):
@@ -415,6 +421,247 @@ class LocalRecommendationEngine:
             return "ACCEPT: location + intent, no rejections"
         else:
             return f"REJECT: {' | '.join(reasons)}"
+
+
+def _normalize_session_db_state(session_db_state: dict) -> dict:
+    """Normalize DB state shape to the required context_snapshot schema."""
+    raw = session_db_state if isinstance(session_db_state, dict) else {}
+    snapshot = raw.get("context_snapshot") if isinstance(raw.get("context_snapshot"), dict) else {}
+    constraints = snapshot.get("user_constraints") if isinstance(snapshot.get("user_constraints"), list) else []
+
+    primary_raw = snapshot.get("primary_subject_entity", None)
+    location_raw = snapshot.get("inferred_current_location", None)
+
+    primary_value = None if primary_raw is None else (str(primary_raw).strip() or None)
+    location_value = None if location_raw is None else (str(location_raw).strip() or None)
+
+    return {
+        "session_id": str(raw.get("session_id", "")).strip(),
+        "context_snapshot": {
+            "primary_subject_entity": primary_value,
+            "inferred_current_location": location_value,
+            "user_constraints": [str(item).strip() for item in constraints if str(item).strip()],
+        },
+    }
+
+
+def _extract_first_explicit_location(query: str) -> Optional[str]:
+    locations = LocalRecommendationEngine._extract_locations(query)
+    if locations["explicit"]:
+        value = str(locations["explicit"][0].get("location", "")).strip(" ?.,!;")
+        return value or None
+
+    aliases = LocalRecommendationEngine._expand_location_aliases(query)
+    for bucket in ("airport_codes", "city_abbreviations", "neighborhoods"):
+        values = aliases.get(bucket, [])
+        if isinstance(values, list) and values:
+            item = values[0]
+            if isinstance(item, dict):
+                for key in ("name", "expanded", "neighborhood", "abbreviation", "code"):
+                    if key in item and str(item.get(key, "")).strip():
+                        return str(item.get(key)).strip()
+    return None
+
+
+def _is_placeholder_subject(subject: Optional[str]) -> bool:
+    if not subject:
+        return True
+    normalized = " ".join(subject.lower().split())
+    placeholders = {
+        "one",
+        "ones",
+        "them",
+        "those",
+        "it",
+        "that",
+        "choice",
+        "choices",
+        "option",
+        "options",
+        "place",
+        "places",
+        "spot",
+        "spots",
+    }
+    if normalized in placeholders:
+        return True
+
+    tokens = normalized.split()
+    if not tokens:
+        return True
+
+    # Treat pure placeholder phrases as placeholders, e.g. "good ones", "great options".
+    if tokens[-1] not in placeholders:
+        return False
+
+    if len(tokens) == 1:
+        return True
+
+    generic_prefixes = {
+        "good",
+        "great",
+        "best",
+        "top",
+        "any",
+        "some",
+        "better",
+    }
+    return all(token in generic_prefixes for token in tokens[:-1])
+
+
+def _subject_from_intent_signals(query: str) -> Optional[str]:
+    intent = LocalRecommendationEngine._detect_recommendation_intent(query)
+    services = intent.get("service_seeking", [])
+    if not isinstance(services, list):
+        return None
+    for token in reversed(services):
+        value = str(token).strip().lower()
+        if not value or _is_placeholder_subject(value):
+            continue
+        return value
+    return None
+
+
+def analyze_local_recommendation(
+    current_query: str,
+    history_list: List[str],
+    session_db_state: dict,
+) -> tuple[bool, dict]:
+    """
+    Dual-layer memory analyzer.
+
+    Layer 1: rolling window of last 3 user turns.
+    Layer 2: persistent DB session context_snapshot fallback.
+    """
+    history_window = [q.strip() for q in (history_list[-3:] if isinstance(history_list, list) else []) if str(q).strip()]
+    normalized_state = _normalize_session_db_state(session_db_state)
+    snapshot = normalized_state["context_snapshot"]
+
+    query = str(current_query or "").strip()
+    intent = LocalRecommendationEngine._detect_recommendation_intent(query)
+    rejections = LocalRecommendationEngine._check_rejection_criteria(query)
+    negation = LocalRecommendationEngine._detect_negation_and_comparatives(query)
+
+    explicit_subject = LocalRecommendationEngine._extract_target_subject(query)
+    if _is_placeholder_subject(explicit_subject):
+        explicit_subject = None
+    explicit_location = _extract_first_explicit_location(query)
+    explicit_abstract = LocalRecommendationEngine._is_abstract_noun(explicit_subject)
+
+    resolved_subject = explicit_subject
+    resolved_location = explicit_location
+    layer1_inherited_fields: list[str] = []
+    layer2_database_fallback_used = False
+
+    needs_subject = (not resolved_subject) or bool(LocalRecommendationEngine.PRONOUN_FOLLOWUP_PATTERN.search(query))
+    needs_location = not resolved_location
+
+    if needs_subject or needs_location:
+        for prev_q in reversed(history_window):
+            if needs_subject and not resolved_subject:
+                prev_subject = LocalRecommendationEngine._extract_target_subject(prev_q)
+                if _is_placeholder_subject(prev_subject):
+                    prev_subject = _subject_from_intent_signals(prev_q)
+                if prev_subject and not LocalRecommendationEngine._is_abstract_noun(prev_subject):
+                    resolved_subject = prev_subject
+                    layer1_inherited_fields.append("primary_subject_entity")
+                    needs_subject = False
+
+            if needs_location and not resolved_location:
+                prev_location = _extract_first_explicit_location(prev_q)
+                if prev_location:
+                    resolved_location = prev_location
+                    layer1_inherited_fields.append("inferred_current_location")
+                    needs_location = False
+
+            if not needs_subject and not needs_location:
+                break
+
+    if not resolved_subject and snapshot.get("primary_subject_entity"):
+        resolved_subject = str(snapshot["primary_subject_entity"]).strip()
+        layer2_database_fallback_used = True
+
+    if not resolved_location and snapshot.get("inferred_current_location"):
+        resolved_location = str(snapshot["inferred_current_location"]).strip()
+        layer2_database_fallback_used = True
+
+    location_detected = bool(resolved_location)
+    subject_detected = bool(resolved_subject) and not LocalRecommendationEngine._is_abstract_noun(resolved_subject)
+    intent_detected = bool(intent.get("has_intent", False))
+
+    final_decision = bool(
+        location_detected
+        and subject_detected
+        and intent_detected
+        and not rejections.get("is_rejected", False)
+        and not negation.get("is_comparative_question", False)
+        and not explicit_abstract
+    )
+
+    # Safe session-state mutation (no pollution on informational turns).
+    database_state_mutated = False
+    informational_turn = bool(rejections.get("is_rejected", False)) and "informational" in rejections.get("matched_patterns", [])
+
+    new_snapshot = {
+        "primary_subject_entity": snapshot.get("primary_subject_entity"),
+        "inferred_current_location": snapshot.get("inferred_current_location"),
+        "user_constraints": list(snapshot.get("user_constraints", [])),
+    }
+
+    if explicit_subject and not explicit_abstract and not informational_turn:
+        subject_changed = str(new_snapshot.get("primary_subject_entity") or "").strip().lower() != explicit_subject.strip().lower()
+        if subject_changed and (
+            bool(LocalRecommendationEngine.SUBJECT_OVERRIDE_CUES.search(query))
+            or bool(intent.get("service_seeking"))
+        ):
+            new_snapshot["primary_subject_entity"] = explicit_subject
+            database_state_mutated = True
+        elif not new_snapshot.get("primary_subject_entity"):
+            new_snapshot["primary_subject_entity"] = explicit_subject
+            database_state_mutated = True
+
+    if explicit_location and not informational_turn:
+        previous_location = str(new_snapshot.get("inferred_current_location") or "").strip().lower()
+        if previous_location != explicit_location.strip().lower():
+            new_snapshot["inferred_current_location"] = explicit_location
+            database_state_mutated = True
+
+    if negation.get("has_negation_constraints"):
+        constraints = list(new_snapshot.get("user_constraints") or [])
+        for pattern_name in negation.get("negation_patterns", []):
+            normalized_constraint = f"negation:{pattern_name}"
+            if normalized_constraint not in constraints:
+                constraints.append(normalized_constraint)
+                database_state_mutated = True
+        new_snapshot["user_constraints"] = constraints[-10:]
+
+    updated_state = {
+        "session_id": normalized_state.get("session_id") or "",
+        "context_snapshot": new_snapshot,
+    }
+
+    decision_payload = {
+        "query": query,
+        "memory_metrics": {
+            "rolling_history_lookback_count": len(history_window),
+            "layer1_context_inherited": bool(layer1_inherited_fields),
+            "layer1_inherited_fields": layer1_inherited_fields,
+            "layer2_database_fallback_used": layer2_database_fallback_used,
+            "database_state_mutated": database_state_mutated,
+        },
+        "resolved_matrix": {
+            "location_detected": location_detected,
+            "resolved_location": resolved_location,
+            "intent_detected": intent_detected,
+            "subject_detected": subject_detected,
+            "resolved_subject": resolved_subject,
+        },
+        "final_decision": final_decision,
+        "session_db_state": updated_state,
+    }
+
+    _engine_logger.debug(json.dumps(decision_payload, indent=2))
+    return final_decision, decision_payload
 
 
 def is_local_recommendation_query(question: str) -> bool:

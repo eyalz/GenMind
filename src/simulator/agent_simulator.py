@@ -196,6 +196,7 @@ _token_cache: dict[str, dict[str, Any]] = {}
 _tenant_cache: dict[str, Any] = {"customer_id": "", "workspace_id": "", "expires_at": 0.0}
 _last_numeric_answer_by_session: dict[str, float] = {}
 _last_user_question_by_session: dict[str, str] = {}
+_recent_user_questions_by_session: dict[str, list[str]] = {}
 _EPHEMERAL_OUTPUT_MARKER = "[SIMULATOR_EPHEMERAL]"
 _live_lock = threading.Lock()
 _live_stop_event = threading.Event()
@@ -210,6 +211,8 @@ _live_state: dict[str, Any] = {
     "last_error": "",
     "last_result_status": "idle",
 }
+
+_MAX_RECENT_QUESTIONS = 3
 
 
 def _http_json(
@@ -452,6 +455,29 @@ def _context_result_from_one_shot(one_shot_result: dict[str, Any]) -> dict[str, 
         "maker_id": one_shot_result.get("maker_id", settings.maker_id),
         "agent_id": one_shot_result.get("agent_id", settings.agent_id),
     }
+
+
+def _normalize_action_name(raw: Any) -> str:
+    """Normalize action values from MCP payloads into add/update/delete/none."""
+    if isinstance(raw, dict):
+        # Some serializers may wrap enum/value fields.
+        for key in ("value", "action", "name"):
+            if key in raw:
+                return _normalize_action_name(raw.get(key))
+        return "none"
+
+    text = str(raw or "none").strip().lower()
+    if "." in text:
+        text = text.split(".")[-1]
+
+    if text in {"add", "update", "delete", "none"}:
+        return text
+
+    for action_name in ("add", "update", "delete", "none"):
+        if action_name in text:
+            return action_name
+
+    return "none"
 
 
 def _sanitize_context_text(contents: str, *, fallback: str, max_chars: int) -> str:
@@ -733,9 +759,66 @@ def _extract_followup_topic(question: str) -> str | None:
     return cleaned
 
 
+def _is_brief_local_followup(question: str) -> bool:
+    """Heuristic for terse continuation queries like 'and tennis court ?'."""
+    lowered = re.sub(r"\s+", " ", question.strip().lower())
+    if not lowered:
+        return False
+
+    followup_markers = (
+        "and ",
+        "and for ",
+        "what about ",
+        "how about ",
+        "also ",
+    )
+    has_marker = any(lowered.startswith(marker) for marker in followup_markers)
+    if not has_marker:
+        return False
+
+    topic = _extract_followup_topic(question)
+    if not topic:
+        return False
+
+    # Reject clearly informational/analytical follow-ups.
+    blocked = (
+        "history",
+        "population",
+        "weather",
+        "distance",
+        "compare",
+        "comparison",
+        "language",
+        "timezone",
+    )
+    if any(term in topic for term in blocked):
+        return False
+
+    token_count = len(re.findall(r"[a-z0-9]+", topic))
+    return 1 <= token_count <= 5
+
+
+def _should_treat_as_local_query(question: str, preferred_location: str | None = None) -> bool:
+    """Decide whether to enforce local recommendation behavior for this turn."""
+    if _is_local_recommendation_query(question):
+        return True
+
+    if preferred_location:
+        followup_topic = _extract_followup_topic(question)
+        if followup_topic:
+            synthetic = f"best {followup_topic} in {preferred_location}"
+            if _is_local_recommendation_query(synthetic):
+                return True
+
+    return _is_brief_local_followup(question)
+
+
 def _build_location_aware_query(question: str, context_excerpt: str) -> str:
     preferred_location = _extract_preferred_location(question, context_excerpt)
-    if not preferred_location or not _is_local_recommendation_query(question):
+    if not preferred_location:
+        return question
+
+    if not _should_treat_as_local_query(question, preferred_location):
         return question
 
     if re.search(r"\bin\s+[a-zA-Z]", question, flags=re.IGNORECASE):
@@ -743,7 +826,7 @@ def _build_location_aware_query(question: str, context_excerpt: str) -> str:
 
     followup_topic = _extract_followup_topic(question)
     if followup_topic:
-        return f"{followup_topic} in {preferred_location}"
+        return f"best {followup_topic} in {preferred_location}"
 
     latest_topic = _extract_latest_search_topic(context_excerpt)
     if latest_topic:
@@ -1158,7 +1241,29 @@ def _build_customer_prompt(
     )
 
 
-def _compose_llm_context(context_excerpt: str, db_session_snapshot: str) -> str:
+def _append_recent_user_question(session_id: str, question: str) -> None:
+    text = question.strip()
+    if not text:
+        return
+
+    bucket = _recent_user_questions_by_session.setdefault(session_id, [])
+    bucket.append(text)
+    if len(bucket) > _MAX_RECENT_QUESTIONS:
+        _recent_user_questions_by_session[session_id] = bucket[-_MAX_RECENT_QUESTIONS:]
+
+
+def _recent_user_questions_block(session_id: str) -> str:
+    items = _recent_user_questions_by_session.get(session_id, [])
+    if not items:
+        return ""
+
+    lines = ["Recent user questions (full text, oldest to newest):"]
+    for idx, item in enumerate(items, start=1):
+        lines.append(f"{idx}. {item}")
+    return "\n".join(lines)
+
+
+def _compose_llm_context(context_excerpt: str, db_session_snapshot: str, *, recent_questions_block: str = "") -> str:
     parts: list[str] = []
 
     primary = context_excerpt.strip()
@@ -1169,6 +1274,9 @@ def _compose_llm_context(context_excerpt: str, db_session_snapshot: str) -> str:
 
     if snapshot and snapshot != "No session snapshot returned." and snapshot != primary:
         parts.append(f"resources/read session snapshot:\n{snapshot}")
+
+    if recent_questions_block.strip():
+        parts.append(recent_questions_block.strip())
 
     if not parts:
         return "No memory context returned."
@@ -1408,8 +1516,16 @@ def _run_chat_flow_internal(
     )
 
     previous_question = _last_user_question_by_session.get(effective_session_id, "").strip()
+    prior_questions = list(_recent_user_questions_by_session.get(effective_session_id, []))
+    recent_block = ""
+    if prior_questions:
+        joined = "\n".join(f"- {q}" for q in prior_questions)
+        recent_block = f"recent user turns (full text):\n{joined}"
+
     effective_query = user_input
-    if previous_question:
+    if recent_block:
+        effective_query = f"{user_input}\n{recent_block}"
+    elif previous_question:
         effective_query = (
             f"{user_input}\n"
             f"follow-up context from previous user turn: {previous_question}"
@@ -1428,6 +1544,7 @@ def _run_chat_flow_internal(
             "source": "simulator-chat-ui",
             "stage": "question_received",
             "previous_user_input": previous_question,
+            "recent_user_inputs": prior_questions,
         },
     )
     _log_debug(f"send_and_receive_response", 
@@ -1449,12 +1566,17 @@ def _run_chat_flow_internal(
     action_breakdown = {"add": 0, "update": 0, "delete": 0, "none": 0}
     extracted_candidates: list[str] = []
     for decision in decisions_list:
-        action = str(decision.get("action", "none")).lower().strip()
+        action = _normalize_action_name(decision.get("action", "none"))
         if action in action_breakdown:
             action_breakdown[action] += 1
         candidate_fact = str(decision.get("candidate_fact", "")).strip()
         if candidate_fact and candidate_fact not in extracted_candidates:
             extracted_candidates.append(candidate_fact)
+
+    # If some decision actions were unrecognized by format, classify remaining as none.
+    parsed_actions_total = sum(action_breakdown.values())
+    if decision_count > parsed_actions_total:
+        action_breakdown["none"] += decision_count - parsed_actions_total
     
     _log_debug(f"audn_decisions_parsed", 
                total_decisions=decision_count,
@@ -1469,7 +1591,7 @@ def _run_chat_flow_internal(
         for mutation in uome_mutations:
             if not isinstance(mutation, dict):
                 continue
-            mutation_action = str(mutation.get("action", "none")).lower().strip()
+            mutation_action = _normalize_action_name(mutation.get("action", "none"))
             if mutation_action == "none":
                 continue
             target = str(mutation.get("target_property_or_entity", "")).strip()
@@ -1549,7 +1671,12 @@ def _run_chat_flow_internal(
         )
     )
 
-    llm_context = _compose_llm_context(context_excerpt, db_session_snapshot)
+    recent_questions_block = _recent_user_questions_block(effective_session_id)
+    llm_context = _compose_llm_context(
+        context_excerpt,
+        db_session_snapshot,
+        recent_questions_block=recent_questions_block,
+    )
     web_query = _build_location_aware_query(user_input, llm_context)
     _log_debug(f"web_knowledge_fetch_initiated", query=web_query[:80])
     fetched_web_knowledge = _fetch_web_knowledge(web_query)
@@ -1564,7 +1691,7 @@ def _run_chat_flow_internal(
     )
     _log_debug(f"web_knowledge_after_filter", count=len(web_knowledge), location=preferred_location)
 
-    if not web_knowledge and preferred_location and _is_local_recommendation_query(user_input):
+    if not web_knowledge and preferred_location and _should_treat_as_local_query(user_input, preferred_location):
         fallback_topic = _extract_followup_topic(user_input) or _extract_latest_search_topic(llm_context) or "places"
         targeted_query = f"best {fallback_topic.replace('_', ' ')} in {preferred_location}"
         _log_debug(f"web_knowledge_fallback_retry", query=targeted_query)
@@ -1596,6 +1723,7 @@ def _run_chat_flow_internal(
     )
     _log_debug(f"llm_answer_generated", length=len(final_answer))
     _last_user_question_by_session[effective_session_id] = user_input
+    _append_recent_user_question(effective_session_id, user_input)
 
     return ChatFlowResponse(
         customer_id=target_customer_id,

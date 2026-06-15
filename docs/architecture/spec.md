@@ -15,6 +15,8 @@ Primary goals:
 - Retrieve high-fidelity context via vector + graph + recency hybrid ranking.
 - Emit compact markdown truth payloads under 1,000 tokens.
 - Provide operational and per-customer dashboards for system health and business intelligence.
+- Provide retrieval-quality SLO dashboards and alert signals from persisted optimizer telemetry.
+- Support deterministic typed-claim backfill jobs with dry-run and checkpoint tracking.
 
 ## 2) High-Level Component Layout
 
@@ -31,6 +33,7 @@ Primary goals:
   - AUDN pipeline (Add/Update/Delete/None) for state mutation decisions.
   - Memory engine for hybrid retrieval and context distillation.
   - Usage event emitter attached to all business-critical routes.
+  - Retrieval telemetry emitter attached to every MCP read/write-response route.
   - PII classifier and redaction pipeline on ingestion path.
 - Data Layer (PostgreSQL + pgvector):
   - customers and workspaces tables with plan and status lifecycle.
@@ -39,7 +42,19 @@ Primary goals:
   - Relational memory tables with Row-Level Security enforcing tenant bounds.
   - Entity graph tables for explicit relationship traversal.
   - usage_events and daily aggregates for consumption reporting.
+  - claim_backfill_checkpoints for idempotent projection runs and operations visibility.
   - audn_audit_log and admin_audit_log for full change history.
+
+  ### 2b) V2 Product Posture
+
+  GenMind V2 is optimized for clean forward design (not backward-compatibility shims):
+
+  - **MCP Protocol Lock**: V2 enforces `protocol_version='2026-01-01'` and rejects all legacy client variants.
+    No runtime version negotiation, no fallback modes, no shim logic.
+  - Retrieval quality is treated as a first-class product surface, not internal-only logs.
+  - Typed claim projection is canonical for deterministic fact resolution.
+  - Backfill and replay are explicit operations with observable checkpoints.
+  - New admin quality endpoints are part of baseline operations for first-customer readiness.
 - Observability Layer:
   - OpenTelemetry instrumentation across API and workers.
   - Prometheus metrics and Grafana dashboards (operational SRE view).

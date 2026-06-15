@@ -11,6 +11,7 @@ from src.auth import create_jwt, hash_api_key, issue_api_key, require_scope
 from src.db import get_pool
 from src.models.schemas import (
     AdminAuditEntry,
+    ClaimBackfillResponse,
     CredentialIssuedResponse,
     CustomerPlan,
     CreateCustomerRequest,
@@ -20,15 +21,20 @@ from src.models.schemas import (
     DatabaseSummaryResponse,
     EndUserDeleteRequest,
     RecentCustomerActivity,
+    RetrievalQualitySnapshot,
+    RetrievalSLOAlert,
+    TenantContext,
     UpdateCustomerRequest,
     WorkspaceEnvironment,
     Workspace,
     WorkspaceStatus,
 )
+from src.services.memory_engine import MemoryEngine
 from src.services.usage_service import UsageService
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 usage_service = UsageService()
+memory_engine = MemoryEngine()
 
 
 class DevTokenRequest(BaseModel):
@@ -570,6 +576,155 @@ async def get_customer_usage(
         latency_ms=int((perf_counter() - started) * 1000),
     )
     return [row.model_dump() for row in rows]
+
+
+@router.get("/usage/{customer_id}/retrieval-quality")
+async def get_retrieval_quality(
+    customer_id: str,
+    request: Request,
+    workspace_id: str | None = Query(default=None),
+    window_seconds: int = Query(default=3600, ge=60, le=86400),
+) -> list[dict[str, object]]:
+    started = perf_counter()
+    claims = require_scope(request, {"admin:usage:read"})
+    rows: list[RetrievalQualitySnapshot] = await usage_service.get_retrieval_quality_snapshots(
+        customer_id=customer_id,
+        workspace_id=workspace_id,
+        window_seconds=window_seconds,
+    )
+    await _emit_admin_usage(
+        request=request,
+        claims=claims,
+        status_code=200,
+        latency_ms=int((perf_counter() - started) * 1000),
+    )
+    return [row.model_dump() for row in rows]
+
+
+@router.get("/usage/{customer_id}/retrieval-alerts")
+async def get_retrieval_alerts(
+    customer_id: str,
+    request: Request,
+    workspace_id: str | None = Query(default=None),
+    window_seconds: int = Query(default=3600, ge=60, le=86400),
+    max_empty_context_ratio: float = Query(default=0.2, ge=0.0, le=1.0),
+    max_low_kept_ratio: float = Query(default=0.35, ge=0.0, le=1.0),
+    max_p95_latency_ms: int = Query(default=1200, ge=50, le=10000),
+) -> list[dict[str, object]]:
+    started = perf_counter()
+    claims = require_scope(request, {"admin:usage:read"})
+    rows: list[RetrievalSLOAlert] = await usage_service.get_retrieval_slo_alerts(
+        customer_id=customer_id,
+        workspace_id=workspace_id,
+        window_seconds=window_seconds,
+        max_empty_context_ratio=max_empty_context_ratio,
+        max_low_kept_ratio=max_low_kept_ratio,
+        max_p95_latency_ms=max_p95_latency_ms,
+    )
+    await _emit_admin_usage(
+        request=request,
+        claims=claims,
+        status_code=200,
+        latency_ms=int((perf_counter() - started) * 1000),
+    )
+    return [row.model_dump() for row in rows]
+
+
+@router.post("/memory/claims/backfill", response_model=ClaimBackfillResponse)
+async def backfill_claims(
+    request: Request,
+    customer_id: str = Query(..., min_length=2, max_length=128),
+    workspace_id: str = Query(..., min_length=2, max_length=128),
+    end_user_id: str = Query(..., min_length=2, max_length=256),
+    session_id: str = Query(..., min_length=2, max_length=256),
+    maker_id: str = Query(default="maker_default", min_length=2, max_length=128),
+    agent_id: str = Query(default="agent_default", min_length=2, max_length=128),
+    dry_run: bool = Query(default=False),
+) -> ClaimBackfillResponse:
+    started = perf_counter()
+    claims = require_scope(request, {"admin:memory:write"})
+
+    tenant = TenantContext(
+        customer_id=customer_id,
+        workspace_id=workspace_id,
+        end_user_id=end_user_id,
+        session_id=session_id,
+    )
+
+    projected_claims = 0
+    checkpoint_updated = False
+    now = datetime.now(timezone.utc)
+
+    if dry_run:
+        memories = await memory_engine.list_active_memories(
+            tenant,
+            maker_id=maker_id,
+            agent_id=agent_id,
+        )
+        projected_claims = len(memories)
+    else:
+        projected_claims = await memory_engine.backfill_claims_from_active_memories(
+            tenant,
+            maker_id=maker_id,
+            agent_id=agent_id,
+        )
+        pool = get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO claim_backfill_checkpoints (
+                    customer_id,
+                    workspace_id,
+                    end_user_id,
+                    session_id,
+                    maker_id,
+                    agent_id,
+                    last_backfilled_at,
+                    last_projected_claims
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (customer_id, workspace_id, end_user_id, session_id, maker_id, agent_id)
+                DO UPDATE SET
+                    last_backfilled_at = EXCLUDED.last_backfilled_at,
+                    last_projected_claims = EXCLUDED.last_projected_claims
+                """,
+                customer_id,
+                workspace_id,
+                end_user_id,
+                session_id,
+                maker_id,
+                agent_id,
+                now,
+                projected_claims,
+            )
+        checkpoint_updated = True
+
+    await _audit(
+        request=request,
+        operator_id=claims.get("sub", "admin"),
+        operator_role="admin",
+        action="backfill_claims",
+        target_resource="memory_claims",
+        target_id=f"{customer_id}:{workspace_id}:{end_user_id}:{session_id}:{maker_id}:{agent_id}",
+    )
+    await _emit_admin_usage(
+        request=request,
+        claims=claims,
+        status_code=200,
+        latency_ms=int((perf_counter() - started) * 1000),
+    )
+
+    return ClaimBackfillResponse(
+        customer_id=customer_id,
+        workspace_id=workspace_id,
+        end_user_id=end_user_id,
+        session_id=session_id,
+        maker_id=maker_id,
+        agent_id=agent_id,
+        dry_run=dry_run,
+        projected_claims=projected_claims,
+        checkpoint_updated=checkpoint_updated,
+        checkpoint_at=now,
+    )
 
 
 @router.get("/activity/recent")

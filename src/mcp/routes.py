@@ -21,6 +21,7 @@ from src.models.schemas import (
     UpdateMemoryToolRequest,
 )
 from src.mcp.mcp_stream_handler import handle_stream_request
+from src.simulator.local_recommendation_engine import analyze_local_recommendation
 from src.services.audn_pipeline import AUDNPipeline
 from src.services.context_optimizer import ContextOptimizer
 from src.services.memory_engine import MemoryEngine
@@ -99,11 +100,8 @@ async def _handle_initialization(
     request: Request,
 ) -> MCPInitializationResponse:
     require_scope(request, {"memory:read", "memory:write"})
-    protocol_version = body.protocol_version or "2026-01-01"
-    if protocol_version != "2024-11-05":
-        protocol_version = "2026-01-01"
     return MCPInitializationResponse(
-        protocol_version=protocol_version,
+        protocol_version="2026-01-01",
         server_name="genmind-mcp",
         server_version="0.1.0",
         transport="streamable/http",
@@ -149,7 +147,9 @@ async def _handle_read_resource(body: MCPResourceReadRequest, request: Request) 
         max_tokens=min(body.max_tokens, 1000),
     )
 
-    result = await _get_context_optimizer().optimize(retrieval_request)
+    optimizer = _get_context_optimizer()
+    result = await optimizer.optimize(retrieval_request)
+    stats = optimizer.last_stats
     latency_ms = int((perf_counter() - started) * 1000)
     request_id = request.headers.get("x-request-id", str(uuid4()))
     await _get_usage_service().emit_simple(
@@ -164,6 +164,14 @@ async def _handle_read_resource(body: MCPResourceReadRequest, request: Request) 
         context_tokens=result.consumed_tokens_estimate,
         vector_reads=len(result.selected_items),
         graph_reads=0,
+        retrieval_mode=stats.retrieval_mode if stats else "",
+        top_k_selected=stats.top_k_selected if stats else 0,
+        score_threshold_milli=int((stats.score_threshold * 1000)) if stats else 0,
+        retrieval_candidates_total=stats.total_candidates if stats else 0,
+        retrieval_candidates_kept=stats.kept_candidates if stats else 0,
+        retrieval_conflicts_dropped=stats.conflicts_dropped if stats else 0,
+        retrieval_claim_rows_reconciled=stats.claim_rows_reconciled if stats else 0,
+        retrieval_light_memory_mode=stats.light_memory_mode if stats else False,
     )
 
     return _format_retrieval_result(
@@ -312,6 +320,38 @@ async def _handle_update_memory_state(
         metadata=body.metadata,
     )
 
+    prior_history = await _get_memory_engine().list_recent_user_questions(
+        tenant,
+        maker_id=body.maker_id,
+        agent_id=body.agent_id,
+        limit=3,
+    )
+    session_state = await _get_memory_engine().get_session_context_state(
+        tenant,
+        maker_id=body.maker_id,
+        agent_id=body.agent_id,
+    )
+    _, decision_payload = analyze_local_recommendation(
+        current_query=body.user_input,
+        history_list=prior_history,
+        session_db_state=session_state,
+    )
+    context_snapshot = decision_payload.get("session_db_state", {}).get("context_snapshot", {})
+    await _get_memory_engine().upsert_session_context_state(
+        tenant,
+        maker_id=body.maker_id,
+        agent_id=body.agent_id,
+        context_snapshot=context_snapshot if isinstance(context_snapshot, dict) else {},
+    )
+
+    await _get_memory_engine().append_recent_user_question(
+        tenant=tenant,
+        maker_id=body.maker_id,
+        agent_id=body.agent_id,
+        question_text=body.user_input,
+        keep_last=3,
+    )
+
     if hasattr(request.app.state, "sse_hub"):
         await request.app.state.sse_hub.publish(
             {
@@ -378,6 +418,39 @@ async def _handle_send_and_receive(
         agent_id=body.agent_id,
         metadata=body.metadata,
     )
+
+    prior_history = await _get_memory_engine().list_recent_user_questions(
+        tenant,
+        maker_id=body.maker_id,
+        agent_id=body.agent_id,
+        limit=3,
+    )
+    session_state = await _get_memory_engine().get_session_context_state(
+        tenant,
+        maker_id=body.maker_id,
+        agent_id=body.agent_id,
+    )
+    _, decision_payload = analyze_local_recommendation(
+        current_query=body.user_input,
+        history_list=prior_history,
+        session_db_state=session_state,
+    )
+    context_snapshot = decision_payload.get("session_db_state", {}).get("context_snapshot", {})
+    await _get_memory_engine().upsert_session_context_state(
+        tenant,
+        maker_id=body.maker_id,
+        agent_id=body.agent_id,
+        context_snapshot=context_snapshot if isinstance(context_snapshot, dict) else {},
+    )
+
+    await _get_memory_engine().append_recent_user_question(
+        tenant=tenant,
+        maker_id=body.maker_id,
+        agent_id=body.agent_id,
+        question_text=body.user_input,
+        keep_last=3,
+    )
+
     audn_pipeline = _get_audn_pipeline()
     decisions = await audn_pipeline.process_and_commit(payload)
     uome_mutations = audn_pipeline.serialize_uome_mutations(decisions)
@@ -389,7 +462,9 @@ async def _handle_send_and_receive(
         query=body.query,
         max_tokens=min(body.max_tokens, 1000),
     )
-    retrieval_result = await _get_context_optimizer().optimize(retrieval_request)
+    optimizer = _get_context_optimizer()
+    retrieval_result = await optimizer.optimize(retrieval_request)
+    stats = optimizer.last_stats
 
     if hasattr(request.app.state, "sse_hub"):
         await request.app.state.sse_hub.publish(
@@ -424,6 +499,14 @@ async def _handle_send_and_receive(
         vector_reads=len(retrieval_result.selected_items),
         graph_reads=0,
         memory_writes=sum(1 for decision in decisions if decision.action.value != "none"),
+        retrieval_mode=stats.retrieval_mode if stats else "",
+        top_k_selected=stats.top_k_selected if stats else 0,
+        score_threshold_milli=int((stats.score_threshold * 1000)) if stats else 0,
+        retrieval_candidates_total=stats.total_candidates if stats else 0,
+        retrieval_candidates_kept=stats.kept_candidates if stats else 0,
+        retrieval_conflicts_dropped=stats.conflicts_dropped if stats else 0,
+        retrieval_claim_rows_reconciled=stats.claim_rows_reconciled if stats else 0,
+        retrieval_light_memory_mode=stats.light_memory_mode if stats else False,
     )
 
     response = SendAndReceiveToolResponse(

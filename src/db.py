@@ -84,8 +84,66 @@ async def _create_schema(pool: asyncpg.Pool) -> None:
         updated_at TIMESTAMPTZ NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS memory_claims (
+        claim_id TEXT PRIMARY KEY,
+        memory_id TEXT NOT NULL REFERENCES memory_records(memory_id) ON DELETE CASCADE,
+        customer_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        end_user_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        maker_id TEXT NOT NULL DEFAULT 'maker_default',
+        agent_id TEXT NOT NULL DEFAULT 'agent_default',
+        mutation_type TEXT NOT NULL,
+        source_entity TEXT NOT NULL,
+        target_property_or_entity TEXT NOT NULL,
+        value_json JSONB NOT NULL DEFAULT '""'::jsonb,
+        temporal_type TEXT NOT NULL DEFAULT 'permanent',
+        valid_from TEXT NOT NULL DEFAULT 'current_interaction',
+        valid_until TEXT NOT NULL DEFAULT 'indefinite',
+        confidence DOUBLE PRECISION NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS session_recent_questions (
+        question_id BIGSERIAL PRIMARY KEY,
+        customer_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        end_user_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        maker_id TEXT NOT NULL DEFAULT 'maker_default',
+        agent_id TEXT NOT NULL DEFAULT 'agent_default',
+        question_text TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS session_context_state (
+        customer_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        end_user_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        maker_id TEXT NOT NULL DEFAULT 'maker_default',
+        agent_id TEXT NOT NULL DEFAULT 'agent_default',
+        context_snapshot JSONB NOT NULL DEFAULT '{"primary_subject_entity": null, "inferred_current_location": null, "user_constraints": []}'::jsonb,
+        updated_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (customer_id, workspace_id, end_user_id, session_id, maker_id, agent_id)
+    );
+
         CREATE INDEX IF NOT EXISTS idx_memory_scope
             ON memory_records(customer_id, workspace_id, end_user_id, session_id, is_active);
+
+    CREATE INDEX IF NOT EXISTS idx_recent_questions_scope
+      ON session_recent_questions(customer_id, workspace_id, end_user_id, session_id, maker_id, agent_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_claims_scope
+            ON memory_claims(customer_id, workspace_id, end_user_id, session_id, maker_id, agent_id, is_active, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_claims_target
+            ON memory_claims(customer_id, workspace_id, end_user_id, target_property_or_entity, is_active, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_session_context_scope
+            ON session_context_state(customer_id, workspace_id, end_user_id, session_id, maker_id, agent_id, updated_at DESC);
 
     CREATE TABLE IF NOT EXISTS usage_events (
         event_id TEXT PRIMARY KEY,
@@ -101,6 +159,14 @@ async def _create_schema(pool: asyncpg.Pool) -> None:
         vector_reads INT NOT NULL,
         graph_reads INT NOT NULL,
         memory_writes INT NOT NULL,
+        retrieval_mode TEXT NOT NULL DEFAULT '',
+        top_k_selected INT NOT NULL DEFAULT 0,
+        score_threshold_milli INT NOT NULL DEFAULT 0,
+        retrieval_candidates_total INT NOT NULL DEFAULT 0,
+        retrieval_candidates_kept INT NOT NULL DEFAULT 0,
+        retrieval_conflicts_dropped INT NOT NULL DEFAULT 0,
+        retrieval_claim_rows_reconciled INT NOT NULL DEFAULT 0,
+        retrieval_light_memory_mode BOOLEAN NOT NULL DEFAULT FALSE,
         latency_ms INT NOT NULL,
         status_code INT NOT NULL,
         occurred_at TIMESTAMPTZ NOT NULL
@@ -145,6 +211,18 @@ async def _create_schema(pool: asyncpg.Pool) -> None:
         occurred_at TIMESTAMPTZ NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS claim_backfill_checkpoints (
+        customer_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        end_user_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        maker_id TEXT NOT NULL DEFAULT 'maker_default',
+        agent_id TEXT NOT NULL DEFAULT 'agent_default',
+        last_backfilled_at TIMESTAMPTZ NOT NULL,
+        last_projected_claims INT NOT NULL DEFAULT 0,
+        PRIMARY KEY (customer_id, workspace_id, end_user_id, session_id, maker_id, agent_id)
+    );
+
         ALTER TABLE customers
             ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT FALSE;
 
@@ -187,8 +265,35 @@ async def _create_schema(pool: asyncpg.Pool) -> None:
         ALTER TABLE audn_audit_log
             ADD COLUMN IF NOT EXISTS reasoning_justification TEXT NOT NULL DEFAULT '';
 
+        ALTER TABLE usage_events
+            ADD COLUMN IF NOT EXISTS retrieval_mode TEXT NOT NULL DEFAULT '';
+
+        ALTER TABLE usage_events
+            ADD COLUMN IF NOT EXISTS top_k_selected INT NOT NULL DEFAULT 0;
+
+        ALTER TABLE usage_events
+            ADD COLUMN IF NOT EXISTS score_threshold_milli INT NOT NULL DEFAULT 0;
+
+        ALTER TABLE usage_events
+            ADD COLUMN IF NOT EXISTS retrieval_candidates_total INT NOT NULL DEFAULT 0;
+
+        ALTER TABLE usage_events
+            ADD COLUMN IF NOT EXISTS retrieval_candidates_kept INT NOT NULL DEFAULT 0;
+
+        ALTER TABLE usage_events
+            ADD COLUMN IF NOT EXISTS retrieval_conflicts_dropped INT NOT NULL DEFAULT 0;
+
+        ALTER TABLE usage_events
+            ADD COLUMN IF NOT EXISTS retrieval_claim_rows_reconciled INT NOT NULL DEFAULT 0;
+
+        ALTER TABLE usage_events
+            ADD COLUMN IF NOT EXISTS retrieval_light_memory_mode BOOLEAN NOT NULL DEFAULT FALSE;
+
         CREATE INDEX IF NOT EXISTS idx_memory_scope_lvl123
             ON memory_records(customer_id, workspace_id, maker_id, agent_id, end_user_id, session_id, is_active);
+
+        CREATE INDEX IF NOT EXISTS idx_claim_backfill_recent
+            ON claim_backfill_checkpoints(last_backfilled_at DESC);
     """
 
     async with pool.acquire() as conn:

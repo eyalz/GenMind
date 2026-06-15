@@ -149,6 +149,29 @@ class MemoryRecord(BaseModel):
     is_active: bool = True
 
 
+class ClaimRecord(BaseModel):
+    """Typed claim projection for deterministic overwrite/reconciliation logic."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    claim_id: StrictStr = Field(min_length=2, max_length=256)
+    memory_id: StrictStr = Field(min_length=2, max_length=256)
+    tenant: TenantContext
+    maker_id: StrictStr = Field(default="maker_default", min_length=2, max_length=128)
+    agent_id: StrictStr = Field(default="agent_default", min_length=2, max_length=128)
+    mutation_type: MutationType
+    source_entity: StrictStr = Field(min_length=2, max_length=256)
+    target_property_or_entity: StrictStr = Field(min_length=2, max_length=256)
+    value_json: Any
+    temporal_type: TemporalType = TemporalType.PERMANENT
+    valid_from: StrictStr = Field(default="current_interaction", min_length=2, max_length=64)
+    valid_until: StrictStr = Field(default="indefinite", min_length=2, max_length=128)
+    confidence: StrictFloat = Field(ge=0.0, le=1.0, default=0.8)
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class SessionTurnPayload(BaseModel):
     """Raw conversational fragment entering the AUDN ingestion loop."""
 
@@ -228,11 +251,14 @@ class AUDNDecision(BaseModel):
 
 
 class MCPInitializationRequest(BaseModel):
-    """MCP initialization handshake request payload."""
+    """MCP initialization handshake request payload.
+    
+    GenMind V2 requires protocol_version='2026-01-01'. No backward compatibility shims.
+    """
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    protocol_version: StrictStr = Field(default="2026-01-01")
+    protocol_version: StrictStr = Field(min_length=10, max_length=32, description="Must be '2026-01-01' for GenMind V2")
     client_name: StrictStr = Field(min_length=2, max_length=256)
     client_version: StrictStr = Field(min_length=1, max_length=64)
 
@@ -487,6 +513,14 @@ class UsageEvent(BaseModel):
     vector_reads: StrictInt = Field(ge=0)
     graph_reads: StrictInt = Field(ge=0)
     memory_writes: StrictInt = Field(ge=0)
+    retrieval_mode: StrictStr = Field(default="")
+    top_k_selected: StrictInt = Field(ge=0, default=0)
+    score_threshold_milli: StrictInt = Field(ge=0, default=0)
+    retrieval_candidates_total: StrictInt = Field(ge=0, default=0)
+    retrieval_candidates_kept: StrictInt = Field(ge=0, default=0)
+    retrieval_conflicts_dropped: StrictInt = Field(ge=0, default=0)
+    retrieval_claim_rows_reconciled: StrictInt = Field(ge=0, default=0)
+    retrieval_light_memory_mode: bool = False
     latency_ms: StrictInt = Field(ge=0)
     status_code: StrictInt = Field(ge=100, le=599)
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -544,6 +578,56 @@ class DatabaseSummaryResponse(BaseModel):
     admin_requests_last_window: StrictInt = Field(ge=0)
     last_memory_write_at: datetime | None = None
     last_usage_event_at: datetime | None = None
+
+
+class RetrievalQualitySnapshot(BaseModel):
+    """Operational retrieval-quality snapshot for one customer/workspace window."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    customer_id: StrictStr = Field(min_length=2, max_length=128)
+    workspace_id: StrictStr = Field(min_length=2, max_length=128)
+    requests_total: StrictInt = Field(ge=0)
+    avg_candidates_total: StrictFloat = Field(ge=0.0)
+    avg_candidates_kept: StrictFloat = Field(ge=0.0)
+    avg_conflicts_dropped: StrictFloat = Field(ge=0.0)
+    avg_claim_rows_reconciled: StrictFloat = Field(ge=0.0)
+    light_memory_mode_ratio: StrictFloat = Field(ge=0.0, le=1.0)
+    empty_context_ratio: StrictFloat = Field(ge=0.0, le=1.0)
+    low_kept_ratio: StrictFloat = Field(ge=0.0, le=1.0)
+    p95_latency_ms: StrictInt = Field(ge=0)
+
+
+class RetrievalSLOAlert(BaseModel):
+    """Threshold-breach signal used for retrieval quality alerting."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    customer_id: StrictStr = Field(min_length=2, max_length=128)
+    workspace_id: StrictStr = Field(min_length=2, max_length=128)
+    metric: StrictStr = Field(min_length=2, max_length=128)
+    observed_value: StrictFloat = Field(ge=0.0)
+    threshold_value: StrictFloat = Field(ge=0.0)
+    severity: StrictStr = Field(min_length=2, max_length=16)
+    window_seconds: StrictInt = Field(ge=1)
+    triggered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ClaimBackfillResponse(BaseModel):
+    """Result payload for admin-triggered claim projection backfill job."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    customer_id: StrictStr = Field(min_length=2, max_length=128)
+    workspace_id: StrictStr = Field(min_length=2, max_length=128)
+    end_user_id: StrictStr = Field(min_length=2, max_length=256)
+    session_id: StrictStr = Field(min_length=2, max_length=256)
+    maker_id: StrictStr = Field(min_length=2, max_length=128)
+    agent_id: StrictStr = Field(min_length=2, max_length=128)
+    dry_run: bool = False
+    projected_claims: StrictInt = Field(ge=0)
+    checkpoint_updated: bool = False
+    checkpoint_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------

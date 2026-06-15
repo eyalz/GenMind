@@ -887,21 +887,27 @@
       const contextText = (data.context_excerpt || '').trim() || 'No context text returned.'
       const dbSnapshotText = (data.db_session_snapshot || '').trim() || 'No session snapshot returned.'
       const timestamp = new Date().toLocaleTimeString()
-      const decisionCount = data.decision_count || 0
-      const memoryWrites = Number.isFinite(data.memory_writes)
-        ? data.memory_writes
-        : (decisionCount > 0 ? decisionCount : 0)
+      const decisionCount = Number.isFinite(data.decision_count) ? data.decision_count : 0
+      const hasReportedMemoryWrites = Number.isFinite(data.memory_writes)
+      const memoryWrites = hasReportedMemoryWrites ? data.memory_writes : 0
       const memoryWriteReason = (data.memory_write_reason || '').trim()
-        || (decisionCount === 0
-          ? 'No extractable fact matched AUDN rules for this turn.'
-          : (memoryWrites === 0 ? 'All AUDN decisions resolved to no-op actions.' : 'AUDN produced persisted memory mutations.'))
+        || (!hasReportedMemoryWrites
+          ? 'Memory write count was not reported by backend payload.'
+          : (decisionCount === 0
+            ? 'No extractable fact matched AUDN rules for this turn.'
+            : (memoryWrites === 0 ? 'All AUDN decisions resolved to no-op actions.' : 'AUDN produced persisted memory mutations.')))
       const selectedItems = Number.isFinite(data.selected_items) ? data.selected_items : 0
       const actionBreakdownRaw = data.action_breakdown || {}
+      const parsedAdd = Number.isFinite(actionBreakdownRaw.add) ? actionBreakdownRaw.add : 0
+      const parsedUpdate = Number.isFinite(actionBreakdownRaw.update) ? actionBreakdownRaw.update : 0
+      const parsedDelete = Number.isFinite(actionBreakdownRaw.delete) ? actionBreakdownRaw.delete : 0
+      const parsedNone = Number.isFinite(actionBreakdownRaw.none) ? actionBreakdownRaw.none : 0
+      const inferredNone = Math.max(0, decisionCount - (parsedAdd + parsedUpdate + parsedDelete + parsedNone))
       const actionBreakdown = {
-        add: Number.isFinite(actionBreakdownRaw.add) ? actionBreakdownRaw.add : 0,
-        update: Number.isFinite(actionBreakdownRaw.update) ? actionBreakdownRaw.update : 0,
-        delete: Number.isFinite(actionBreakdownRaw.delete) ? actionBreakdownRaw.delete : 0,
-        none: Number.isFinite(actionBreakdownRaw.none) ? actionBreakdownRaw.none : Math.max(0, decisionCount - memoryWrites),
+        add: parsedAdd,
+        update: parsedUpdate,
+        delete: parsedDelete,
+        none: parsedNone + inferredNone,
       }
       const extractedCandidates = Array.isArray(data.extracted_candidates)
         ? data.extracted_candidates.filter(item => typeof item === 'string' && item.trim())
@@ -945,7 +951,7 @@
           </div>
           <div class="db-action-summary">
             <div class="db-action-item"><strong>Decisions:</strong>${decisionCount}</div>
-            <div class="db-action-item"><strong>Memory Writes:</strong>${memoryWrites}</div>
+            <div class="db-action-item"><strong>Memory Writes:</strong>${memoryWrites}${hasReportedMemoryWrites ? '' : ' (not reported)'}</div>
             <div class="db-action-item"><strong>Action Breakdown:</strong>add=${actionBreakdown.add}, update=${actionBreakdown.update}, delete=${actionBreakdown.delete}, none=${actionBreakdown.none}</div>
             <div class="db-action-item"><strong>Extracted Candidates:</strong><br>${formatInlineList(extractedCandidates)}</div>
             <div class="db-action-item"><strong>Persisted Facts:</strong><br>${formatInlineList(persistedFacts)}</div>

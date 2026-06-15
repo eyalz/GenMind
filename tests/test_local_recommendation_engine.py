@@ -4,7 +4,11 @@ Test suite for LocalRecommendationEngine.
 """
 
 import json
-from src.simulator.local_recommendation_engine import LocalRecommendationEngine, is_local_recommendation_query
+from src.simulator.local_recommendation_engine import (
+    LocalRecommendationEngine,
+    analyze_local_recommendation,
+    is_local_recommendation_query,
+)
 
 
 def test_local_recommendation_engine():
@@ -132,6 +136,96 @@ def test_target_subject_extraction():
         subject = LocalRecommendationEngine._extract_target_subject(query)
         print(f"\nQuery: {query!r}")
         print(f"  Target Subject: {subject!r}")
+
+
+def test_dual_layer_flow_a_layer1_success():
+    """Flow A: Layer 1 rolling history should resolve subject for pronoun follow-up."""
+    history = [
+        "Who is the best corporate lawyer?",
+        "Do they handle contract disputes?",
+    ]
+    session_state = {
+        "session_id": "sess_flow_a",
+        "context_snapshot": {
+            "primary_subject_entity": None,
+            "inferred_current_location": None,
+            "user_constraints": [],
+        },
+    }
+
+    decision, payload = analyze_local_recommendation(
+        current_query="any good ones in Tel Aviv?",
+        history_list=history,
+        session_db_state=session_state,
+    )
+
+    assert decision is True
+    assert payload["resolved_matrix"]["resolved_subject"] is not None
+    assert payload["resolved_matrix"]["resolved_location"] is not None
+    assert payload["memory_metrics"]["layer1_context_inherited"] is True
+    assert "primary_subject_entity" in payload["memory_metrics"]["layer1_inherited_fields"]
+
+
+def test_dual_layer_flow_b_layer2_fallback_success():
+    """Flow B: Layer 2 DB fallback should resolve subject when rolling history misses it."""
+    history = [
+        "What are their typical hourly rates?",
+        "Can you explain retainer fees?",
+        "Do they accept credit cards?",
+    ]
+    session_state = {
+        "session_id": "sess_flow_b",
+        "context_snapshot": {
+            "primary_subject_entity": "lawyer",
+            "inferred_current_location": "Tel Aviv",
+            "user_constraints": [],
+        },
+    }
+
+    decision, payload = analyze_local_recommendation(
+        current_query="Are there any good choices in Haifa?",
+        history_list=history,
+        session_db_state=session_state,
+    )
+
+    assert decision is True
+    assert payload["memory_metrics"]["layer2_database_fallback_used"] is True
+    assert payload["resolved_matrix"]["resolved_subject"] == "lawyer"
+    assert payload["resolved_matrix"]["resolved_location"] is not None
+
+
+def test_session_state_mutation_and_protection_rules():
+    """Verify overwrite on strong new entity and no pollution on informational turns."""
+    base_state = {
+        "session_id": "sess_mutation",
+        "context_snapshot": {
+            "primary_subject_entity": "lawyer",
+            "inferred_current_location": "Tel Aviv",
+            "user_constraints": [],
+        },
+    }
+
+    # Strong override should mutate subject.
+    decision1, payload1 = analyze_local_recommendation(
+        current_query="Actually, forget lawyers, find me a good pizza spot in Tel Aviv",
+        history_list=["who is the best lawyer in tel aviv"],
+        session_db_state=base_state,
+    )
+    assert decision1 is True
+    snapshot1 = payload1["session_db_state"]["context_snapshot"]
+    assert snapshot1["primary_subject_entity"] is not None
+    assert "pizza" in snapshot1["primary_subject_entity"].lower()
+    assert payload1["memory_metrics"]["database_state_mutated"] is True
+
+    # Informational query should not clear subject.
+    decision2, payload2 = analyze_local_recommendation(
+        current_query="what time does the sun set in Tel Aviv?",
+        history_list=["Actually, forget lawyers, find me a good pizza spot in Tel Aviv"],
+        session_db_state=payload1["session_db_state"],
+    )
+    assert decision2 is False
+    snapshot2 = payload2["session_db_state"]["context_snapshot"]
+    assert snapshot2["primary_subject_entity"] == snapshot1["primary_subject_entity"]
 
 
 if __name__ == "__main__":

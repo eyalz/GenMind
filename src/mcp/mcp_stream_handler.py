@@ -134,21 +134,23 @@ async def handle_stream_request(
 
     try:
         if method == "initialize":
-            init_params = dict(params)
-            if "protocolVersion" in init_params and "protocol_version" not in init_params:
-                init_params["protocol_version"] = init_params["protocolVersion"]
-            init_params.pop("protocolVersion", None)
-            if "client_name" not in init_params:
-                init_params["client_name"] = "copilot-studio"
-            if "client_version" not in init_params:
-                init_params["client_version"] = "unknown"
-
-            requested_protocol = str(init_params.get("protocol_version", "")).strip()
-            req = MCPInitializationRequest.model_validate(init_params)
+            if "protocolVersion" in params or "protocol_version" not in params:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing required field: protocol_version. GenMind V2 requires MCP protocol_version='2026-01-01' in params.",
+                )
+            if "client_name" not in params or "client_version" not in params:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Missing required fields: client_name and client_version.",
+                )
+            req = MCPInitializationRequest.model_validate(params)
+            if req.protocol_version != "2026-01-01":
+                raise HTTPException(
+                    status_code=400,
+                    detail="GenMind V2 only supports protocol_version='2026-01-01'. Received: " + req.protocol_version,
+                )
             result = (await handle_initialization(req, request)).model_dump()
-            # Copilot Studio currently requests this legacy protocol version.
-            if requested_protocol == "2024-11-05":
-                result["protocol_version"] = "2024-11-05"
         elif method == "resources/list":
             result = await handle_list_resources(request)
         elif method == "resources/read":

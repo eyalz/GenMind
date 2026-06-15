@@ -121,6 +121,88 @@
         }
       }
     },
+    "/admin/usage/{customer_id}/retrieval-quality": {
+      "get": {
+        "summary": "Get retrieval-quality snapshots for a customer",
+        "operationId": "getRetrievalQuality",
+        "tags": ["admin", "usage"],
+        "security": [{"BearerAuth": ["admin:usage:read"]}],
+        "parameters": [
+          {"name": "customer_id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "workspace_id", "in": "query", "schema": {"type": "string"}},
+          {"name": "window_seconds", "in": "query", "schema": {"type": "integer", "minimum": 60, "maximum": 86400, "default": 3600}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Retrieval quality snapshots",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {"$ref": "#/components/schemas/RetrievalQualitySnapshot"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/usage/{customer_id}/retrieval-alerts": {
+      "get": {
+        "summary": "Get retrieval SLO alerts for a customer",
+        "operationId": "getRetrievalAlerts",
+        "tags": ["admin", "usage"],
+        "security": [{"BearerAuth": ["admin:usage:read"]}],
+        "parameters": [
+          {"name": "customer_id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "workspace_id", "in": "query", "schema": {"type": "string"}},
+          {"name": "window_seconds", "in": "query", "schema": {"type": "integer", "minimum": 60, "maximum": 86400, "default": 3600}},
+          {"name": "max_empty_context_ratio", "in": "query", "schema": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.2}},
+          {"name": "max_low_kept_ratio", "in": "query", "schema": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.35}},
+          {"name": "max_p95_latency_ms", "in": "query", "schema": {"type": "integer", "minimum": 50, "maximum": 10000, "default": 1200}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Retrieval quality alerts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {"$ref": "#/components/schemas/RetrievalSLOAlert"}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/memory/claims/backfill": {
+      "post": {
+        "summary": "Backfill typed claims from active memory records",
+        "operationId": "backfillClaims",
+        "tags": ["admin", "memory"],
+        "security": [{"BearerAuth": ["admin:memory:write"]}],
+        "parameters": [
+          {"name": "customer_id", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "workspace_id", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "end_user_id", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "session_id", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "maker_id", "in": "query", "schema": {"type": "string", "default": "maker_default"}},
+          {"name": "agent_id", "in": "query", "schema": {"type": "string", "default": "agent_default"}},
+          {"name": "dry_run", "in": "query", "schema": {"type": "boolean", "default": false}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Backfill result",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ClaimBackfillResponse"}
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/end-users/{end_user_id}/delete": {
       "post": {
         "summary": "Submit right-to-delete request for an end user",
@@ -379,13 +461,16 @@
         "properties": {
           "protocol_version": {
             "type": "string",
-            "default": "2026-01-01"
+            "const": "2026-01-01",
+            "description": "GenMind V2 requires exactly '2026-01-01'. No backward compatibility."
           },
           "client_name": {
-            "type": "string"
+            "type": "string",
+            "description": "MCP client identifier"
           },
           "client_version": {
-            "type": "string"
+            "type": "string",
+            "description": "MCP client version"
           }
         }
       },
@@ -827,6 +912,66 @@
           "total_memory_writes": {"type": "integer"},
           "active_end_users": {"type": "integer"},
           "avg_latency_ms": {"type": "number"}
+        }
+      },
+      "RetrievalQualitySnapshot": {
+        "type": "object",
+        "required": [
+          "customer_id", "workspace_id", "requests_total", "avg_candidates_total", "avg_candidates_kept",
+          "avg_conflicts_dropped", "avg_claim_rows_reconciled", "light_memory_mode_ratio",
+          "empty_context_ratio", "low_kept_ratio", "p95_latency_ms"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {"type": "string"},
+          "workspace_id": {"type": "string"},
+          "requests_total": {"type": "integer"},
+          "avg_candidates_total": {"type": "number"},
+          "avg_candidates_kept": {"type": "number"},
+          "avg_conflicts_dropped": {"type": "number"},
+          "avg_claim_rows_reconciled": {"type": "number"},
+          "light_memory_mode_ratio": {"type": "number"},
+          "empty_context_ratio": {"type": "number"},
+          "low_kept_ratio": {"type": "number"},
+          "p95_latency_ms": {"type": "integer"}
+        }
+      },
+      "RetrievalSLOAlert": {
+        "type": "object",
+        "required": [
+          "customer_id", "workspace_id", "metric", "observed_value", "threshold_value",
+          "severity", "window_seconds", "triggered_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {"type": "string"},
+          "workspace_id": {"type": "string"},
+          "metric": {"type": "string"},
+          "observed_value": {"type": "number"},
+          "threshold_value": {"type": "number"},
+          "severity": {"type": "string"},
+          "window_seconds": {"type": "integer"},
+          "triggered_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ClaimBackfillResponse": {
+        "type": "object",
+        "required": [
+          "customer_id", "workspace_id", "end_user_id", "session_id", "maker_id", "agent_id",
+          "dry_run", "projected_claims", "checkpoint_updated", "checkpoint_at"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "customer_id": {"type": "string"},
+          "workspace_id": {"type": "string"},
+          "end_user_id": {"type": "string"},
+          "session_id": {"type": "string"},
+          "maker_id": {"type": "string"},
+          "agent_id": {"type": "string"},
+          "dry_run": {"type": "boolean"},
+          "projected_claims": {"type": "integer"},
+          "checkpoint_updated": {"type": "boolean"},
+          "checkpoint_at": {"type": "string", "format": "date-time"}
         }
       },
       "EndUserDeleteRequest": {
